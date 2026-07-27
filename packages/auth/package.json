@@ -24,6 +24,6 @@
     "jose": "^6.0.10"
   },
   "devDependencies": {
-    "vitest": "^3.0.8"
+    "vitest": "^4.1.10"
   }
 }

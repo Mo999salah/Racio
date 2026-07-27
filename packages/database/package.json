@@ -20,6 +20,6 @@
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10",
-    "vitest": "^3.0.8"
+    "vitest": "^4.1.10"
   }
 }
