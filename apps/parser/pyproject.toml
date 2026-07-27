@@ -25,7 +25,7 @@ packages = ["src/racio_parser"]
 dev = [
   "httpx>=0.28,<1",
   "mypy>=1.15,<2",
-  "pytest>=8.3,<9",
+  "pytest>=8.3,<10",
   "ruff>=0.9,<1",
 ]
 
