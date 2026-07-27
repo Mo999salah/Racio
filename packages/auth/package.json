@@ -1,0 +1,29 @@
+{
+  "name": "@racio/auth",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "dev": "tsc --noEmit --watch",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@racio/config": "workspace:*",
+    "@racio/contracts": "workspace:*",
+    "@racio/database": "workspace:*",
+    "@racio/domain": "workspace:*",
+    "@racio/storage": "workspace:*",
+    "@better-auth/drizzle-adapter": "1.6.25",
+    "better-auth": "1.6.25",
+    "drizzle-orm": "^0.45.2",
+    "jose": "^6.0.10"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.8"
+  }
+}

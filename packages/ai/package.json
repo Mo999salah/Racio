@@ -1,0 +1,15 @@
+{
+  "name": "@racio/ai",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "dev": "tsc --noEmit --watch",
+    "lint": "eslint src",
+    "test": "node -e \"console.log('ai: disabled by default')\"",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@racio/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "dev": "tsx src/main.ts",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@racio/auth": "workspace:*",
+    "@racio/config": "workspace:*",
+    "@racio/contracts": "workspace:*",
+    "@racio/database": "workspace:*",
+    "@racio/imports": "workspace:*",
+    "@racio/storage": "workspace:*",
+    "pg-boss": "^12.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.3",
+    "vitest": "^3.0.8"
+  }
+}
