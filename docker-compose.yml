@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: racio
+      POSTGRES_USER: racio
+      POSTGRES_PASSWORD: racio_dev
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [racio-internal]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U racio -d racio']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://racio:racio_dev@postgres:5432/racio
+      BETTER_AUTH_URL: http://localhost:3000
+      BETTER_AUTH_SECRET: racio-local-development-secret-change-me-32
+      PARSER_URL: http://parser:8001
+      LOCAL_STORAGE_PATH: /var/lib/racio/uploads
+      NEXT_PUBLIC_DEFAULT_LOCALE: en
+    depends_on:
+      postgres:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    volumes:
+      - racio-private-storage:/var/lib/racio/uploads
+    networks: [racio-internal]
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://racio:racio_dev@postgres:5432/racio
+      PG_BOSS_SCHEMA: pgboss
+      PARSER_URL: http://parser:8001
+      LOCAL_STORAGE_PATH: /var/lib/racio/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    volumes:
+      - racio-private-storage:/var/lib/racio/uploads
+    networks: [racio-internal]
+
+  parser:
+    build:
+      context: apps/parser
+      dockerfile: ../../docker/parser.Dockerfile
+    environment:
+      PARSER_ENV: development
+    expose:
+      - '8001'
+    networks: [racio-internal]
+    healthcheck:
+      test:
+        [
+          CMD,
+          python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  racio-internal:
+    internal: true
+
+volumes:
+  postgres-data:
+  racio-private-storage:
+
+# Development notes:
+# - PostgreSQL is intentionally not published to the host. Use `docker compose
+#   exec postgres psql ...` when an interactive database session is needed.
+# - For hot reload, create a local docker-compose.override.yml (untracked) that
+#   mounts source directories and replaces production-like commands.
+# - Production deployments must provide secrets through the host/orchestrator,
+#   never by editing this file.

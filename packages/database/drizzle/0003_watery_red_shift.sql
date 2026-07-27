@@ -1,0 +1,1 @@
+ALTER TABLE "statements" ALTER COLUMN "reconciliation_tolerance" SET DEFAULT '0.000001';

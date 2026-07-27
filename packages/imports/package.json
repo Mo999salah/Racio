@@ -1,0 +1,27 @@
+{
+  "name": "@racio/imports",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "dev": "tsc --noEmit --watch",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@racio/auth": "workspace:*",
+    "@racio/contracts": "workspace:*",
+    "@racio/database": "workspace:*",
+    "@racio/domain": "workspace:*",
+    "@racio/storage": "workspace:*",
+    "@racio/transactions": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.8"
+  }
+}
