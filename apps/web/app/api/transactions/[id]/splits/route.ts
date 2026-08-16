@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import { database } from '../../../../../lib/database';
 import { apiError } from '../../../../../lib/api-errors';
 import { assertSameOrigin } from '../../../../../lib/request-security';
+import { enqueueAlertEvaluation } from '../../../../../lib/jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,14 +28,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const session = await requireSession(await headers());
     const parsed = transactionSplitsReplaceSchema.safeParse(await request.json());
     if (!parsed.success) throw new AuthBoundaryError('VALIDATION', 'Invalid split definition.');
-    return Response.json(
-      await replaceTransactionSplits(
-        database.db,
-        session.user.id,
-        (await params).id,
-        parsed.data.splits,
-      ),
+    const result = await replaceTransactionSplits(
+      database.db,
+      session.user.id,
+      (await params).id,
+      parsed.data.splits,
     );
+    enqueueAlertEvaluation(session.user.id).catch(() => undefined);
+    return Response.json(result);
   } catch (error) {
     return apiError(error);
   }

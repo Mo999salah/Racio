@@ -1,9 +1,10 @@
 import { AuthBoundaryError } from './errors';
-import { auth } from './auth';
+import { getAuth, type RacioAuth } from './auth';
 
-export type AuthSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
+export type AuthSession = NonNullable<Awaited<ReturnType<RacioAuth['api']['getSession']>>>;
 
 export async function getSession(headers: Headers) {
+  const auth = await getAuth();
   return auth.api.getSession({ headers });
 }
 

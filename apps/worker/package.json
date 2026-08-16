@@ -14,7 +14,9 @@
     "@racio/config": "workspace:*",
     "@racio/contracts": "workspace:*",
     "@racio/database": "workspace:*",
+    "@racio/export": "workspace:*",
     "@racio/imports": "workspace:*",
+    "@racio/planning": "workspace:*",
     "@racio/storage": "workspace:*",
     "pg-boss": "^12.5.0"
   },

@@ -14,6 +14,7 @@ CREATE TABLE "financial_accounts" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "financial_accounts_user_institution_unique" UNIQUE("user_id","institution_id"),
+	CONSTRAINT "financial_accounts_id_user_id_unique" UNIQUE("id","user_id"),
 	CONSTRAINT "financial_accounts_display_name_not_empty" CHECK (length(btrim("financial_accounts"."display_name")) > 0),
 	CONSTRAINT "financial_accounts_currency_code_format" CHECK ("financial_accounts"."currency_code" ~ '^[A-Z]{3}$'),
 	CONSTRAINT "financial_accounts_masked_account_identifier_not_full" CHECK ("financial_accounts"."masked_account_identifier" IS NULL OR "financial_accounts"."masked_account_identifier" !~ '^[0-9][0-9 -]{7,}$'),

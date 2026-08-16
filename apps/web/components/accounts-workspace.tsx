@@ -19,6 +19,25 @@ type Account = {
 const currencies = ['AED', 'CAD', 'CHF', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'TRY', 'USD'];
 const accountTypes = ['checking', 'savings', 'credit', 'cash', 'other'] as const;
 
+export function resolveDateLocale(localeValue: string, doc = globalThis.document) {
+  const candidates = [localeValue, doc?.documentElement?.lang, 'en'];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+
+    const normalized = candidate.trim();
+    if (!normalized) continue;
+
+    try {
+      return Intl.getCanonicalLocales(normalized)[0];
+    } catch {
+      // Try the next locale candidate.
+    }
+  }
+
+  return 'en';
+}
+
 export function AccountsWorkspace({
   initialInstitutions,
   initialAccounts,
@@ -179,7 +198,7 @@ export function AccountsWorkspace({
   }
 
   function formatDate(value: string) {
-    return new Intl.DateTimeFormat(document.documentElement.lang, { dateStyle: 'medium' }).format(
+    return new Intl.DateTimeFormat(resolveDateLocale(locale), { dateStyle: 'medium' }).format(
       new Date(value),
     );
   }

@@ -155,5 +155,4 @@ CREATE INDEX "transaction_category_assignments_category_idx" ON "transaction_cat
 CREATE UNIQUE INDEX "transaction_category_assignments_one_primary" ON "transaction_category_assignments" USING btree ("user_id","transaction_id") WHERE "transaction_category_assignments"."role" = 'primary';--> statement-breakpoint
 CREATE INDEX "transaction_tags_transaction_idx" ON "transaction_tags" USING btree ("user_id","transaction_id");--> statement-breakpoint
 CREATE INDEX "transaction_tags_tag_idx" ON "transaction_tags" USING btree ("user_id","tag_id");--> statement-breakpoint
-ALTER TABLE "transactions" ADD CONSTRAINT "transactions_reviewed_by_user_id_user_id_fk" FOREIGN KEY ("reviewed_by_user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "transactions" ADD CONSTRAINT "transactions_id_user_id_unique" UNIQUE("id","user_id");
+ALTER TABLE "transactions" ADD CONSTRAINT "transactions_reviewed_by_user_id_user_id_fk" FOREIGN KEY ("reviewed_by_user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;

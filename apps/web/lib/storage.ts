@@ -1,5 +1,11 @@
-import { readAppEnv } from '@racio/config';
-import { createLocalPrivateStorage } from '@racio/storage';
+import { createLocalPrivateStorage, type PrivateStorage } from '@racio/storage';
 
-const env = readAppEnv();
-export const privateStorage = createLocalPrivateStorage({ rootDirectory: env.LOCAL_STORAGE_PATH });
+let cachedStorage: PrivateStorage | undefined;
+
+/** Lazily created so importing the module never requires environment values. */
+export function getPrivateStorage(): PrivateStorage {
+  cachedStorage ??= createLocalPrivateStorage({
+    rootDirectory: process.env.LOCAL_STORAGE_PATH ?? './uploads',
+  });
+  return cachedStorage;
+}

@@ -97,9 +97,11 @@ export const financialAccountType = pgEnum('financial_account_type', [
 
 export const financialAccountStatus = pgEnum('financial_account_status', ['active', 'archived']);
 
-export const statementSourceType = pgEnum('statement_source_type', ['csv']);
+export const statementSourceType = pgEnum('statement_source_type', ['csv', 'xlsx', 'pdf']);
 export const statementProcessingStatus = pgEnum('statement_processing_status', [
   'uploaded',
+  'inspecting',
+  'needs_sheet_selection',
   'parsing',
   'needs_mapping',
   'needs_review',
@@ -224,6 +226,7 @@ export const financialAccounts = pgTable(
       table.userId,
       table.institutionId,
     ),
+    idUserUnique: unique('financial_accounts_id_user_id_unique').on(table.id, table.userId),
     ownerInstitutionFk: foreignKey({
       columns: [table.institutionId, table.userId],
       foreignColumns: [institutions.id, institutions.userId],
@@ -319,6 +322,9 @@ export const statements = pgTable(
       .default('safe_to_continue'),
     uploadIdempotencyKey: text('upload_idempotency_key').notNull(),
     mappingSnapshot: jsonb('mapping_snapshot'),
+    workbookInspection: jsonb('workbook_inspection'),
+    pdfInspection: jsonb('pdf_inspection'),
+    sourceMetadata: jsonb('source_metadata'),
     detectedLanguage: text('detected_language'),
     periodStart: date('period_start'),
     periodEnd: date('period_end'),
@@ -460,6 +466,7 @@ export const rawTransactions = pgTable(
       table.statementId,
       table.sourceRow,
     ),
+    idUserUnique: unique('raw_transactions_id_user_id_unique').on(table.id, table.userId),
     ownerStatementFk: foreignKey({
       columns: [table.statementId, table.userId],
       foreignColumns: [statements.id, statements.userId],
@@ -571,11 +578,10 @@ export const transactionSplits = pgTable(
     archivedAt: timestamp('archived_at', { withTimezone: true }),
   },
   (table) => ({
-    transactionPositionUnique: unique('transaction_splits_transaction_position_unique').on(
-      table.userId,
-      table.transactionId,
-      table.position,
-    ),
+    transactionPositionUnique: uniqueIndex('transaction_splits_transaction_position_unique')
+      .on(table.userId, table.transactionId, table.position)
+      .where(sql`${table.archivedAt} IS NULL`),
+    idUserUnique: unique('transaction_splits_id_user_id_unique').on(table.id, table.userId),
     transactionIdx: index('transaction_splits_transaction_idx').on(
       table.userId,
       table.transactionId,
@@ -1113,6 +1119,297 @@ export const savedViews = pgTable(
       .on(table.userId)
       .where(sql`${table.isDefault} = true`),
     nameNotEmpty: check('saved_views_name_not_empty', sql`length(btrim(${table.name})) > 0`),
+  }),
+);
+
+export const budgetPeriod = pgEnum('budget_period', ['weekly', 'monthly', 'yearly', 'custom']);
+export const goalTrackingMode = pgEnum('goal_tracking_mode', ['manual', 'account_balance']);
+export const alertRuleType = pgEnum('alert_rule_type', [
+  'uncategorized_transactions',
+  'goal_milestone',
+  'goal_deadline',
+]);
+export const alertEventType = pgEnum('alert_event_type', [
+  'budget_approaching',
+  'budget_exceeded',
+  'reconciliation_mismatch',
+  'uncategorized_transactions',
+  'goal_milestone',
+  'goal_deadline',
+]);
+
+export const budgets = pgTable(
+  'budgets',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    currency: text('currency').notNull(),
+    amount: numeric('amount', { precision: 20, scale: 6 }).notNull(),
+    periodType: budgetPeriod('period_type').notNull(),
+    categoryId: text('category_id'),
+    accountId: text('account_id'),
+    customStartDate: date('custom_start_date'),
+    customEndDate: date('custom_end_date'),
+    warningThreshold: integer('warning_threshold'),
+    rolloverEnabled: boolean('rollover_enabled').notNull().default(false),
+    enabled: boolean('enabled').notNull().default(true),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userEnabledIdx: index('budgets_user_enabled_idx').on(table.userId, table.enabled),
+    idUserUnique: unique('budgets_id_user_id_unique').on(table.id, table.userId),
+    ownerCategoryFk: foreignKey({
+      columns: [table.categoryId, table.userId],
+      foreignColumns: [categories.id, categories.userId],
+      name: 'budgets_owner_category_fk',
+    }),
+    ownerAccountFk: foreignKey({
+      columns: [table.accountId, table.userId],
+      foreignColumns: [financialAccounts.id, financialAccounts.userId],
+      name: 'budgets_owner_account_fk',
+    }),
+    nameNotEmpty: check('budgets_name_not_empty', sql`length(btrim(${table.name})) > 0`),
+    currencyCodeFormat: check(
+      'budgets_currency_code_format',
+      sql`${table.currency} ~ '^[A-Z]{3}$'`,
+    ),
+    amountPositive: check('budgets_amount_positive', sql`${table.amount} > 0`),
+    warningThresholdRange: check(
+      'budgets_warning_threshold_range',
+      sql`${table.warningThreshold} IS NULL OR (${table.warningThreshold} >= 1 AND ${table.warningThreshold} <= 100)`,
+    ),
+    customPeriodConsistent: check(
+      'budgets_custom_period_consistent',
+      sql`(${table.periodType} = 'custom' AND ${table.customStartDate} IS NOT NULL AND ${table.customEndDate} IS NOT NULL) OR (${table.periodType} <> 'custom' AND ${table.customStartDate} IS NULL AND ${table.customEndDate} IS NULL)`,
+    ),
+    customPeriodRange: check(
+      'budgets_custom_period_range',
+      sql`${table.customStartDate} IS NULL OR ${table.customEndDate} IS NULL OR ${table.customStartDate} <= ${table.customEndDate}`,
+    ),
+  }),
+);
+
+export const savingsGoals = pgTable(
+  'savings_goals',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    currency: text('currency').notNull(),
+    targetAmount: numeric('target_amount', { precision: 20, scale: 6 }).notNull(),
+    targetDate: date('target_date'),
+    trackingMode: goalTrackingMode('tracking_mode').notNull(),
+    accountId: text('account_id'),
+    manualSavedAmount: numeric('manual_saved_amount', { precision: 20, scale: 6 }),
+    enabled: boolean('enabled').notNull().default(true),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userEnabledIdx: index('savings_goals_user_enabled_idx').on(table.userId, table.enabled),
+    idUserUnique: unique('savings_goals_id_user_id_unique').on(table.id, table.userId),
+    ownerAccountFk: foreignKey({
+      columns: [table.accountId, table.userId],
+      foreignColumns: [financialAccounts.id, financialAccounts.userId],
+      name: 'savings_goals_owner_account_fk',
+    }),
+    nameNotEmpty: check('savings_goals_name_not_empty', sql`length(btrim(${table.name})) > 0`),
+    currencyCodeFormat: check(
+      'savings_goals_currency_code_format',
+      sql`${table.currency} ~ '^[A-Z]{3}$'`,
+    ),
+    targetAmountPositive: check('savings_goals_target_positive', sql`${table.targetAmount} > 0`),
+    manualSavedAmountNonNegative: check(
+      'savings_goals_manual_saved_non_negative',
+      sql`${table.manualSavedAmount} IS NULL OR ${table.manualSavedAmount} >= 0`,
+    ),
+    trackingModeConsistent: check(
+      'savings_goals_tracking_mode_consistent',
+      sql`(${table.trackingMode} = 'account_balance' AND ${table.accountId} IS NOT NULL) OR (${table.trackingMode} = 'manual' AND ${table.accountId} IS NULL)`,
+    ),
+  }),
+);
+
+export const alertRules = pgTable(
+  'alert_rules',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    type: alertRuleType('type').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    config: jsonb('config').notNull(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userEnabledIdx: index('alert_rules_user_enabled_idx').on(table.userId, table.enabled),
+    idUserUnique: unique('alert_rules_id_user_id_unique').on(table.id, table.userId),
+    configObject: check('alert_rules_config_object', sql`${table.config} IS NOT NULL`),
+  }),
+);
+
+export const alertEvents = pgTable(
+  'alert_events',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    ruleId: text('rule_id'),
+    type: alertEventType('type').notNull(),
+    entityType: text('entity_type'),
+    entityId: text('entity_id'),
+    dedupeKey: text('dedupe_key').notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    triggeredAt: timestamp('triggered_at', { withTimezone: true }).defaultNow().notNull(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    userStateIdx: index('alert_events_user_state_idx').on(
+      table.userId,
+      table.readAt,
+      table.dismissedAt,
+    ),
+    idUserUnique: unique('alert_events_id_user_id_unique').on(table.id, table.userId),
+    userDedupeUnique: unique('alert_events_user_dedupe_unique').on(table.userId, table.dedupeKey),
+    ownerRuleFk: foreignKey({
+      columns: [table.ruleId, table.userId],
+      foreignColumns: [alertRules.id, alertRules.userId],
+      name: 'alert_events_owner_rule_fk',
+    }),
+    dedupeKeyNotEmpty: check(
+      'alert_events_dedupe_key_not_empty',
+      sql`length(btrim(${table.dedupeKey})) > 0`,
+    ),
+  }),
+);
+
+export const advisorMessageRole = pgEnum('advisor_message_role', ['user', 'assistant']);
+
+export const advisorThreads = pgTable(
+  'advisor_threads',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    title: text('title'),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userUpdatedIdx: index('advisor_threads_user_updated_idx').on(table.userId, table.updatedAt),
+    idUserUnique: unique('advisor_threads_id_user_id_unique').on(table.id, table.userId),
+    titleNotEmpty: check(
+      'advisor_threads_title_not_empty',
+      sql`${table.title} IS NULL OR length(btrim(${table.title})) > 0`,
+    ),
+  }),
+);
+
+export const advisorMessages = pgTable(
+  'advisor_messages',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    threadId: text('thread_id').notNull(),
+    role: advisorMessageRole('role').notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    threadIdx: index('advisor_messages_thread_idx').on(table.threadId, table.createdAt),
+    idUserUnique: unique('advisor_messages_id_user_id_unique').on(table.id, table.userId),
+    ownerThreadFk: foreignKey({
+      columns: [table.threadId, table.userId],
+      foreignColumns: [advisorThreads.id, advisorThreads.userId],
+      name: 'advisor_messages_owner_thread_fk',
+    }),
+    contentNotEmpty: check(
+      'advisor_messages_content_not_empty',
+      sql`length(btrim(${table.content})) > 0`,
+    ),
+  }),
+);
+
+export const advisorProposalStatus = pgEnum('advisor_proposal_status', [
+  'pending',
+  'executed',
+  'expired',
+  'cancelled',
+]);
+
+export const advisorProposals = pgTable(
+  'advisor_proposals',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    payload: jsonb('payload').notNull(),
+    status: advisorProposalStatus('status').notNull().default('pending'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    executedAt: timestamp('executed_at', { withTimezone: true }),
+    result: jsonb('result'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userStatusIdx: index('advisor_proposals_user_status_idx').on(table.userId, table.status),
+    idUserUnique: unique('advisor_proposals_id_user_id_unique').on(table.id, table.userId),
+    typeNotEmpty: check('advisor_proposals_type_not_empty', sql`length(btrim(${table.type})) > 0`),
+  }),
+);
+
+export const exportType = pgEnum('export_type', [
+  'transactions_csv',
+  'transactions_xlsx',
+  'account_archive',
+]);
+export const exportStatus = pgEnum('export_status', ['preparing', 'ready', 'failed']);
+
+export const exports = pgTable(
+  'exports',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    type: exportType('type').notNull(),
+    status: exportStatus('status').notNull().default('preparing'),
+    requestJson: jsonb('request_json').notNull(),
+    storageKey: text('storage_key'),
+    sizeBytes: integer('size_bytes'),
+    checksum: text('checksum'),
+    rowCount: integer('row_count'),
+    errorCode: text('error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userCreatedIdx: index('exports_user_created_idx').on(table.userId, table.createdAt),
+    idUserUnique: unique('exports_id_user_id_unique').on(table.id, table.userId),
+    checksumFormat: check(
+      'exports_checksum_format',
+      sql`${table.checksum} IS NULL OR ${table.checksum} ~ '^[a-f0-9]{64}$'`,
+    ),
   }),
 );
 

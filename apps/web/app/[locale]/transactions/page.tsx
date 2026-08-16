@@ -144,6 +144,10 @@ export default async function TransactionsPage({
     'includeArchived',
   ];
   const hasExplicitFilters = filterKeys.some((key) => rawSearchParams[key] !== undefined);
+  const exportUrl = hasExplicitFilters
+    ? `/${locale}/export?${new URLSearchParams(query).toString()}`
+    : `/${locale}/export`;
+  const exportLabel = await getTranslations('export');
   return (
     <AccountShell locale={locale} name={user.name}>
       <ThemeSync appearance={preferences.appearance} />
@@ -152,6 +156,11 @@ export default async function TransactionsPage({
           <p className="eyebrow">{t('eyebrow')}</p>
           <h1 id="transactions-title">{t('title')}</h1>
           <p>{t('description')}</p>
+          <p className="page-heading-action">
+            <a className="text-button" href={exportUrl}>
+              {exportLabel('transactionsHeading')}
+            </a>
+          </p>
         </div>
         <TransactionsWorkspace
           labels={labels}

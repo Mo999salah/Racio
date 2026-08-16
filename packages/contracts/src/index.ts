@@ -102,6 +102,33 @@ export const parsedCsvCandidateSchema = z
   })
   .strict();
 
+export const rawWorkbookCellSchema = z
+  .object({
+    row: z.number().int().positive(),
+    column: z.number().int().positive(),
+    coordinate: z.string().regex(/^[A-Z]{1,3}[1-9]\d*$/u),
+    displayedText: z.string().max(20_000).nullable(),
+    rawType: z.enum([
+      'blank',
+      'string',
+      'number',
+      'date',
+      'boolean',
+      'formula_cached',
+      'formula_uncached',
+      'error',
+    ]),
+    rawValue: z.string().max(20_000).nullable(),
+    numberFormat: z.string().max(500).nullable(),
+    formula: z.string().max(2_000).nullable(),
+    hasCachedValue: z.boolean().nullable(),
+  })
+  .strict();
+
+export const xlsxParsedCandidateSchema = parsedCsvCandidateSchema
+  .extend({ rawCells: z.array(rawWorkbookCellSchema).max(32) })
+  .strict();
+
 export const parserResultV2Schema = z
   .object({
     contractVersion: z.literal('racio.parser.v2'),
@@ -136,6 +163,249 @@ export function parseParserResultV2(input: unknown): ParserResultV2 {
   return parserResultV2Schema.parse(input);
 }
 
+export const workbookSheetInspectionSchema = z
+  .object({
+    id: z.string().trim().min(1).max(200),
+    name: z.string().min(1).max(500),
+    index: z.number().int().nonnegative(),
+    hidden: z.boolean(),
+    veryHidden: z.boolean(),
+    estimatedRows: z.number().int().nonnegative(),
+    estimatedColumns: z.number().int().nonnegative(),
+    populatedCells: z.number().int().nonnegative(),
+    mergedRangeCount: z.number().int().nonnegative(),
+    formulaCellCount: z.number().int().nonnegative(),
+    sampleRows: z.array(z.array(z.string().max(2_000)).max(16)).max(8),
+    warnings: z.array(z.string().max(200)).max(100),
+  })
+  .strict();
+
+export const workbookInspectionSchema = z
+  .object({
+    contractVersion: z.literal('racio.workbook-inspection.v1'),
+    workbookType: z.literal('xlsx'),
+    sheetCount: z.number().int().nonnegative(),
+    dateSystem: z.enum(['1900', '1904']),
+    sheets: z.array(workbookSheetInspectionSchema).max(32),
+    workbookWarnings: z.array(z.string().max(200)).max(100),
+  })
+  .strict();
+
+export const xlsxMappingSchema = csvMappingSchema
+  .omit({ headerRow: true })
+  .extend({
+    sourceType: z.literal('xlsx'),
+    selectedSheetId: z.string().trim().min(1).max(200),
+    selectedSheetName: z.string().min(1).max(500),
+    selectedSheetIndex: z.number().int().nonnegative(),
+    headerRow: z.number().int().positive(),
+    firstDataRow: z.number().int().positive(),
+    lastDataRow: z.number().int().positive().nullable(),
+    columnLetters: z.record(z.string().regex(/^[A-Z]{1,3}$/u)).optional(),
+    cellTypeHints: z.record(z.string().max(100)).optional(),
+    numberFormatHints: z.record(z.string().max(500)).optional(),
+  })
+  .strict()
+  .superRefine((mapping, context) => {
+    if (mapping.firstDataRow <= mapping.headerRow)
+      context.addIssue({
+        code: 'custom',
+        path: ['firstDataRow'],
+        message: 'The first data row must follow the header row.',
+      });
+    if (mapping.lastDataRow !== null && mapping.lastDataRow < mapping.firstDataRow)
+      context.addIssue({
+        code: 'custom',
+        path: ['lastDataRow'],
+        message: 'The last data row must not precede the first data row.',
+      });
+  });
+
+export const xlsxParserResultSchema = z
+  .object({
+    contractVersion: z.literal('racio.parser.v2'),
+    source: z
+      .object({
+        sourceType: z.literal('xlsx'),
+        filename: z.string().min(1),
+        mediaType: z.string().min(1),
+        sheetName: z.string().min(1).max(500),
+        sheetIndex: z.number().int().nonnegative(),
+        headerRow: z.number().int().positive(),
+        firstDataRow: z.number().int().positive(),
+        lastDataRow: z.number().int().positive().nullable(),
+        workbookDateSystem: z.enum(['1900', '1904']),
+        formulaCellCount: z.number().int().nonnegative(),
+        mergedRangeCount: z.number().int().nonnegative(),
+        detectedLanguage: z.string().nullable(),
+      })
+      .strict(),
+    mapping: z
+      .object({
+        status: csvMappingStatusSchema,
+        columns: xlsxMappingSchema,
+        confidence: z.number().min(0).max(1),
+        warnings: z.array(z.string()),
+      })
+      .strict(),
+    candidates: z.array(xlsxParsedCandidateSchema),
+    warnings: z.array(z.string()),
+  })
+  .strict();
+
+export type WorkbookInspection = z.infer<typeof workbookInspectionSchema>;
+export type WorkbookSheetInspection = z.infer<typeof workbookSheetInspectionSchema>;
+export type XlsxMapping = z.infer<typeof xlsxMappingSchema>;
+export type XlsxParserResult = z.infer<typeof xlsxParserResultSchema>;
+
+export function parseWorkbookInspection(input: unknown): WorkbookInspection {
+  return workbookInspectionSchema.parse(input);
+}
+
+export function parseXlsxParserResult(input: unknown): XlsxParserResult {
+  return xlsxParserResultSchema.parse(input);
+}
+
+export const pdfPageInspectionSchema = z
+  .object({
+    pageNumber: z.number().int().positive(),
+    width: z.number().nonnegative(),
+    height: z.number().nonnegative(),
+    textCharacterCount: z.number().int().nonnegative(),
+    wordCount: z.number().int().nonnegative(),
+    imageCount: z.number().int().nonnegative(),
+    likelyTable: z.boolean(),
+    sampleLines: z.array(z.string().max(200)).max(5),
+    warnings: z.array(z.string().max(200)).max(100),
+  })
+  .strict();
+
+export const pdfInspectionSchema = z
+  .object({
+    contractVersion: z.literal('racio.pdf-inspection.v1'),
+    sourceType: z.literal('pdf'),
+    pageCount: z.number().int().nonnegative(),
+    encrypted: z.boolean(),
+    hasUsableText: z.boolean(),
+    likelyImageOnly: z.boolean(),
+    textUsability: z.enum(['usable', 'mixed', 'image_only', 'none']),
+    textCharacterCount: z.number().int().nonnegative(),
+    pages: z.array(pdfPageInspectionSchema).max(200),
+    documentWarnings: z.array(z.string().max(200)).max(100),
+  })
+  .strict();
+
+export const pdfBoundingBoxSchema = z
+  .object({
+    x0: z.number(),
+    top: z.number(),
+    x1: z.number(),
+    bottom: z.number(),
+  })
+  .strict();
+
+export const pdfStatementMetadataSchema = z
+  .object({
+    periodStart: z.string().date().nullable(),
+    periodEnd: z.string().date().nullable(),
+    openingBalance: z
+      .string()
+      .regex(/^-?\d{1,14}(?:\.\d{1,6})?$/u)
+      .nullable(),
+    closingBalance: z
+      .string()
+      .regex(/^-?\d{1,14}(?:\.\d{1,6})?$/u)
+      .nullable(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/u)
+      .nullable(),
+    institutionNameText: z.string().max(200).nullable(),
+    maskedAccountIdentifier: z.string().max(80).nullable(),
+  })
+  .strict();
+
+export const pdfColumnBandSchema = z
+  .object({
+    label: z.string().trim().min(1).max(200),
+    x0: z.number().nonnegative(),
+    x1: z.number().nonnegative(),
+  })
+  .strict();
+
+export const pdfMappingSchema = z
+  .object({
+    sourceType: z.literal('pdf'),
+    pageCount: z.number().int().nonnegative(),
+    sourcePages: z.array(z.number().int().positive()).max(200),
+    headerLabels: z.array(z.string().max(200)).max(100),
+    columnBands: z.array(pdfColumnBandSchema).max(100),
+    amountColumnMode: z.enum(['signed', 'debit_credit', 'unknown']),
+    lineGroupingStrategy: z.string().min(1).max(100),
+    hasYear: z.boolean(),
+    decimalSeparator: z.enum(['.', ',']).nullable(),
+    thousandsSeparator: z.enum(['.', ',', ' ']).nullable(),
+    dateFormat: z.string().max(40).nullable(),
+  })
+  .strict();
+
+export const pdfParsedCandidateSchema = parsedCsvCandidateSchema
+  .extend({
+    sourcePage: z.number().int().positive(),
+    description: z.string().max(1_000).nullable(),
+    rawLines: z.array(z.string().max(2_000)).max(20),
+    boundingBox: pdfBoundingBoxSchema.nullable(),
+    parserStrategy: z.string().max(100).nullable(),
+  })
+  .strict();
+
+export const pdfParserResultSchema = z
+  .object({
+    contractVersion: z.literal('racio.parser.v2'),
+    source: z
+      .object({
+        sourceType: z.literal('pdf'),
+        filename: z.string().min(1),
+        mediaType: z.string().min(1),
+        pageCount: z.number().int().nonnegative(),
+        detectedLanguage: z.string().nullable(),
+        amountColumnMode: z.enum(['signed', 'debit_credit', 'unknown']),
+        hasYear: z.boolean(),
+        decimalSeparator: z.enum(['.', ',']).nullable(),
+        thousandsSeparator: z.enum(['.', ',', ' ']).nullable(),
+        dateFormat: z.string().max(40).nullable(),
+      })
+      .strict(),
+    mapping: z
+      .object({
+        status: csvMappingStatusSchema,
+        columns: pdfMappingSchema,
+        confidence: z.number().min(0).max(1),
+        warnings: z.array(z.string()),
+      })
+      .strict(),
+    candidates: z.array(pdfParsedCandidateSchema).max(50_000),
+    metadata: pdfStatementMetadataSchema.nullable(),
+    warnings: z.array(z.string()),
+  })
+  .strict();
+
+export type PdfInspection = z.infer<typeof pdfInspectionSchema>;
+export type PdfPageInspection = z.infer<typeof pdfPageInspectionSchema>;
+export type PdfStatementMetadata = z.infer<typeof pdfStatementMetadataSchema>;
+export type PdfColumnBand = z.infer<typeof pdfColumnBandSchema>;
+export type PdfMapping = z.infer<typeof pdfMappingSchema>;
+export type PdfParsedCandidate = z.infer<typeof pdfParsedCandidateSchema>;
+export type PdfParserResult = z.infer<typeof pdfParserResultSchema>;
+
+export function parsePdfInspection(input: unknown): PdfInspection {
+  return pdfInspectionSchema.parse(input);
+}
+
+export function parsePdfParserResult(input: unknown): PdfParserResult {
+  return pdfParserResultSchema.parse(input);
+}
+
 export const importUploadSchema = z
   .object({
     accountId: z.string().trim().min(1).max(200),
@@ -145,7 +415,16 @@ export const importUploadSchema = z
   })
   .strict();
 
-export const importMappingPatchSchema = z.object({ mapping: csvMappingSchema }).strict();
+export const importMappingPatchSchema = z
+  .object({ mapping: z.union([csvMappingSchema, xlsxMappingSchema, pdfMappingSchema]) })
+  .strict();
+export const xlsxSheetSelectionSchema = z
+  .object({
+    sheetId: z.string().trim().min(1).max(200),
+    sheetIndex: z.number().int().nonnegative(),
+    sheetName: z.string().min(1).max(500),
+  })
+  .strict();
 export const importRowCorrectionSchema = z
   .object({
     bookingDate: z.string().date().nullable().optional(),
@@ -617,6 +896,113 @@ export const financialAccountActionSchema = z
 
 export const includeArchivedSchema = z.enum(['true', 'false']).default('false');
 
+export const dashboardQuerySchema = z
+  .object({
+    dateFrom: z.string().date().optional(),
+    dateTo: z.string().date().optional(),
+    accountId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine((value) => !value.dateFrom || !value.dateTo || value.dateFrom <= value.dateTo, {
+    message: 'dateFrom must be before dateTo',
+  });
+
+const signedDecimalSchema = z.string().regex(/^-?\d{1,14}(?:\.\d{1,6})?$/u);
+
+export const knownBalanceSourceSchema = z.enum([
+  'transaction_balance_after',
+  'statement_closing_balance',
+]);
+
+export const knownBalanceSchema = z
+  .object({
+    amount: signedDecimalSchema,
+    currency: currencyCodeSchema,
+    asOfDate: z.string().date(),
+    source: knownBalanceSourceSchema,
+    sourceId: z.string(),
+  })
+  .strict();
+
+export const dashboardCashFlowSchema = z
+  .object({
+    currency: currencyCodeSchema,
+    inflow: phase5DecimalSchema,
+    outflow: phase5DecimalSchema,
+    net: signedDecimalSchema,
+    count: z.number().int().nonnegative(),
+    unresolvedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const dashboardAccountSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    currency: currencyCodeSchema,
+    status: z.enum(['active', 'archived']),
+    transactionCount: z.number().int().nonnegative(),
+    netActivity: signedDecimalSchema,
+    balance: knownBalanceSchema.nullable(),
+    hasData: z.boolean(),
+  })
+  .strict();
+
+export const dashboardCategorySchema = z
+  .object({
+    currency: currencyCodeSchema,
+    name: z.string().nullable(),
+    amount: phase5DecimalSchema,
+    sharePercent: z.string().regex(/^\d{1,3}(?:\.\d{1,3})?$/u),
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const dashboardMerchantSchema = z
+  .object({
+    currency: currencyCodeSchema,
+    name: z.string(),
+    amount: phase5DecimalSchema,
+    sharePercent: z.string().regex(/^\d{1,3}(?:\.\d{1,3})?$/u),
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const dashboardAttentionItemSchema = z
+  .object({
+    kind: z.enum(['statement_needs_action', 'reconciliation_mismatch']),
+    statementId: z.string(),
+    filename: z.string(),
+    processingStatus: z.string().optional(),
+    reconciliationStatus: z.string().optional(),
+  })
+  .strict();
+
+export const dashboardAttentionSchema = z
+  .object({
+    unreviewed: z.number().int().nonnegative(),
+    statementsNeedingAction: z.number().int().nonnegative(),
+    reconciliationMismatch: z.number().int().nonnegative(),
+    items: z.array(dashboardAttentionItemSchema).max(8),
+  })
+  .strict();
+
+export const dashboardSummarySchema = z
+  .object({
+    period: z
+      .object({ from: z.string().date(), to: z.string().date(), isDefault: z.boolean() })
+      .strict(),
+    hasAccounts: z.boolean(),
+    hasTransactions: z.boolean(),
+    currencies: z.array(currencyCodeSchema),
+    cashFlow: z.array(dashboardCashFlowSchema),
+    accounts: z.array(dashboardAccountSchema),
+    categories: z.array(dashboardCategorySchema),
+    merchants: z.array(dashboardMerchantSchema),
+    attention: dashboardAttentionSchema,
+  })
+  .strict();
+
 export type InstitutionCreate = z.infer<typeof institutionCreateSchema>;
 export type InstitutionPatch = z.infer<typeof institutionPatchSchema>;
 export type FinancialAccountCreate = z.infer<typeof financialAccountCreateSchema>;
@@ -649,3 +1035,395 @@ export type TransactionSplitsReplace = z.infer<typeof transactionSplitsReplaceSc
 export type TransactionMerchantPatch = z.infer<typeof transactionMerchantPatchSchema>;
 export type TransferListQuery = z.infer<typeof transferListQuerySchema>;
 export type ManualTransferLink = z.infer<typeof manualTransferLinkSchema>;
+export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
+export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;
+export type KnownBalance = z.infer<typeof knownBalanceSchema>;
+export type KnownBalanceSource = z.infer<typeof knownBalanceSourceSchema>;
+
+// Phase 10: budgets, savings goals, and alerts.
+
+export const budgetPeriodSchema = z.enum(['weekly', 'monthly', 'yearly', 'custom']);
+
+const positiveAmountSchema = phase5DecimalSchema.refine((value) => value !== '0', {
+  message: 'Amount must be greater than zero.',
+});
+
+const budgetFieldsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    currency: currencyCodeSchema,
+    amount: positiveAmountSchema,
+    period: budgetPeriodSchema,
+    categoryId: z.string().trim().min(1).max(200).nullable().optional(),
+    accountId: z.string().trim().min(1).max(200).nullable().optional(),
+    startDate: z.string().date().nullable().optional(),
+    endDate: z.string().date().nullable().optional(),
+    warningThreshold: z.number().int().min(1).max(100).nullable().optional(),
+    rolloverEnabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+function budgetPeriodRefinement(
+  value: {
+    period: z.infer<typeof budgetPeriodSchema>;
+    startDate?: string | null;
+    endDate?: string | null;
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (value.period === 'custom') {
+    if (!value.startDate || !value.endDate)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['startDate'],
+        message: 'A custom period requires start and end dates.',
+      });
+    if (value.startDate && value.endDate && value.startDate > value.endDate)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endDate'],
+        message: 'The end date must follow the start date.',
+      });
+  } else if (value.startDate || value.endDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['startDate'],
+      message: 'Only a custom period carries explicit dates.',
+    });
+  }
+}
+
+export const budgetCreateSchema = budgetFieldsSchema.superRefine(budgetPeriodRefinement);
+
+export const budgetPatchSchema = budgetFieldsSchema
+  .partial()
+  .strict()
+  .superRefine((value, ctx) => {
+    if (Object.keys(value).length === 0)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: 'At least one budget field is required.',
+      });
+    budgetPeriodRefinement(
+      {
+        period: value.period ?? 'monthly',
+        startDate: value.startDate,
+        endDate: value.endDate,
+      },
+      ctx,
+    );
+  });
+
+export const budgetActionSchema = z
+  .object({ action: z.enum(['archive', 'restore', 'enable', 'disable']) })
+  .strict();
+
+export const goalTrackingModeSchema = z.enum(['manual', 'account_balance']);
+
+const savingsGoalFieldsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    currency: currencyCodeSchema,
+    targetAmount: positiveAmountSchema,
+    targetDate: z.string().date().nullable().optional(),
+    trackingMode: goalTrackingModeSchema,
+    accountId: z.string().trim().min(1).max(200).nullable().optional(),
+    manualSavedAmount: phase5DecimalSchema.nullable().optional(),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+function goalTrackingRefinement(
+  value: {
+    trackingMode: z.infer<typeof goalTrackingModeSchema>;
+    accountId?: string | null;
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (value.trackingMode === 'account_balance' && !value.accountId)
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accountId'],
+      message: 'Account-balance tracking requires a linked account.',
+    });
+  if (value.trackingMode === 'manual' && value.accountId)
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accountId'],
+      message: 'Manual tracking does not use an account.',
+    });
+}
+
+export const savingsGoalCreateSchema = savingsGoalFieldsSchema.superRefine(goalTrackingRefinement);
+
+export const savingsGoalPatchSchema = savingsGoalFieldsSchema
+  .partial()
+  .strict()
+  .superRefine((value, ctx) => {
+    if (Object.keys(value).length === 0)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: 'At least one goal field is required.',
+      });
+    goalTrackingRefinement(
+      { trackingMode: value.trackingMode ?? 'manual', accountId: value.accountId },
+      ctx,
+    );
+  });
+
+export const savingsGoalActionSchema = z
+  .object({ action: z.enum(['archive', 'restore']) })
+  .strict();
+
+export const goalProgressUpdateSchema = z
+  .object({ manualSavedAmount: phase5DecimalSchema })
+  .strict();
+
+export const alertEventTypeSchema = z.enum([
+  'budget_approaching',
+  'budget_exceeded',
+  'reconciliation_mismatch',
+  'uncategorized_transactions',
+  'goal_milestone',
+  'goal_deadline',
+]);
+
+export const alertRuleTypeSchema = z.enum([
+  'uncategorized_transactions',
+  'goal_milestone',
+  'goal_deadline',
+]);
+
+export const alertRuleConfigSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('uncategorized_transactions'),
+      threshold: z.number().int().min(1).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('goal_milestone'),
+      goalId: z.string().trim().min(1).max(200),
+      milestones: z.array(z.number().int().min(1).max(100)).min(1).max(10),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('goal_deadline'),
+      goalId: z.string().trim().min(1).max(200),
+      daysBefore: z.number().int().min(1).max(365),
+    })
+    .strict(),
+]);
+
+export const alertRuleCreateSchema = z
+  .object({
+    type: alertRuleTypeSchema,
+    config: z.unknown(),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+export const alertRulePatchSchema = z
+  .object({
+    config: z.unknown().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, 'At least one rule field is required.');
+
+export const alertRuleActionSchema = z
+  .object({ action: z.enum(['enable', 'disable', 'archive', 'restore']) })
+  .strict();
+
+export const alertListQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    offset: z.coerce.number().int().min(0).max(10_000).default(0),
+    state: z.enum(['unread', 'read', 'dismissed', 'all']).default('unread'),
+  })
+  .strict();
+
+export const alertActionSchema = z
+  .object({ action: z.enum(['read', 'unread', 'dismiss']) })
+  .strict();
+
+export type BudgetPeriod = z.infer<typeof budgetPeriodSchema>;
+export type BudgetCreate = z.infer<typeof budgetCreateSchema>;
+export type BudgetPatch = z.infer<typeof budgetPatchSchema>;
+export type SavingsGoalCreate = z.infer<typeof savingsGoalCreateSchema>;
+export type SavingsGoalPatch = z.infer<typeof savingsGoalPatchSchema>;
+export type GoalProgressUpdate = z.infer<typeof goalProgressUpdateSchema>;
+export type GoalTrackingMode = z.infer<typeof goalTrackingModeSchema>;
+export type AlertEventType = z.infer<typeof alertEventTypeSchema>;
+export type AlertRuleType = z.infer<typeof alertRuleTypeSchema>;
+export type AlertRuleConfig = z.infer<typeof alertRuleConfigSchema>;
+export type AlertRuleCreate = z.infer<typeof alertRuleCreateSchema>;
+export type AlertRulePatch = z.infer<typeof alertRulePatchSchema>;
+export type AlertListQuery = z.infer<typeof alertListQuerySchema>;
+
+// Phase 11: optional AI financial advisor.
+
+export const advisorDateRangeSchema = z
+  .object({
+    from: z.string().date(),
+    to: z.string().date(),
+  })
+  .strict()
+  .refine((value) => value.from <= value.to, 'The end date must follow the start date.');
+
+export const advisorContextSchema = z
+  .object({
+    dateRange: advisorDateRangeSchema.optional(),
+    currency: currencyCodeSchema.optional(),
+    accountId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const advisorQuerySchema = z
+  .object({
+    message: z.string().trim().min(1).max(2_000),
+    threadId: z.string().trim().min(1).max(200).optional(),
+    context: advisorContextSchema.optional(),
+  })
+  .strict();
+
+const advisorPositiveAmountSchema = phase5DecimalSchema.refine((value) => value !== '0', {
+  message: 'Amount must be greater than zero.',
+});
+
+export const advisorProposalSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('categorize_transactions'),
+      transactionIds: z.array(z.string().trim().min(1).max(200)).min(1).max(100),
+      categoryId: z.string().trim().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('create_budget'),
+      name: z.string().trim().min(1).max(160),
+      currency: currencyCodeSchema,
+      amount: advisorPositiveAmountSchema,
+      period: budgetPeriodSchema,
+      categoryId: z.string().trim().min(1).max(200).nullable().optional(),
+      accountId: z.string().trim().min(1).max(200).nullable().optional(),
+      startDate: z.string().date().nullable().optional(),
+      endDate: z.string().date().nullable().optional(),
+      warningThreshold: z.number().int().min(1).max(100).nullable().optional(),
+      rolloverEnabled: z.boolean().default(false),
+    })
+    .strict(),
+]);
+
+export const advisorProposalRequestSchema = z.object({ proposal: advisorProposalSchema }).strict();
+
+export const advisorConfirmSchema = z
+  .object({ proposalId: z.string().trim().min(1).max(200) })
+  .strict();
+
+export const advisorThreadDeleteSchema = z
+  .object({ threadId: z.string().trim().min(1).max(200) })
+  .strict();
+
+export type AdvisorDateRange = z.infer<typeof advisorDateRangeSchema>;
+export type AdvisorContext = z.infer<typeof advisorContextSchema>;
+export type AdvisorQuery = z.infer<typeof advisorQuerySchema>;
+export type AdvisorProposal = z.infer<typeof advisorProposalSchema>;
+export type AdvisorProposalRequest = z.infer<typeof advisorProposalRequestSchema>;
+export type AdvisorConfirm = z.infer<typeof advisorConfirmSchema>;
+
+export const exportTypeSchema = z.enum([
+  'transactions_csv',
+  'transactions_xlsx',
+  'account_archive',
+]);
+export const exportStatusSchema = z.enum(['preparing', 'ready', 'failed']);
+
+export const exportTransactionFiltersSchema = z
+  .object({
+    dateFrom: z.string().date().optional(),
+    dateTo: z.string().date().optional(),
+    accountId: z.string().trim().min(1).max(200).optional(),
+    institutionId: z.string().trim().min(1).max(200).optional(),
+    direction: parserDirectionSchema.optional(),
+    currency: currencyCodeSchema.optional(),
+    primaryCategoryId: z.string().trim().min(1).max(200).optional(),
+    secondaryCategoryId: z.string().trim().min(1).max(200).optional(),
+    tagId: z.string().trim().min(1).max(200).optional(),
+    reviewed: z.enum(['true', 'false']).optional(),
+    categorised: z.enum(['true', 'false']).optional(),
+    statementId: z.string().trim().min(1).max(200).optional(),
+    search: z.string().trim().max(100).optional(),
+    amountExact: phase5DecimalSchema.optional(),
+    amountMin: phase5DecimalSchema.optional(),
+    amountMax: phase5DecimalSchema.optional(),
+    includeArchived: z.enum(['true', 'false']).default('false'),
+    savedViewId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine((value) => !value.dateFrom || !value.dateTo || value.dateFrom <= value.dateTo, {
+    message: 'dateFrom must be before dateTo',
+  })
+  .refine((value) => !value.amountMin || !value.amountMax || value.amountMin <= value.amountMax, {
+    message: 'amountMin must be before amountMax',
+  })
+  .refine(
+    (value) =>
+      Boolean(value.currency) || (!value.amountExact && !value.amountMin && !value.amountMax),
+    'A currency is required when filtering by amount.',
+  );
+
+export const exportRequestSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('transactions_csv'),
+      filters: exportTransactionFiltersSchema,
+      includeNotes: z.boolean().default(false),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('transactions_xlsx'),
+      filters: exportTransactionFiltersSchema,
+      includeNotes: z.boolean().default(false),
+      includeSplits: z.boolean().default(false),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('account_archive'),
+      includeNotes: z.boolean().default(false),
+      includeAdvisorConversations: z.boolean().default(false),
+    })
+    .strict(),
+]);
+
+export const exportRecordSchema = z.object({
+  id: z.string().min(1),
+  type: exportTypeSchema,
+  status: exportStatusSchema,
+  rowCount: z.number().int().nonnegative().nullable(),
+  sizeBytes: z.number().int().nonnegative().nullable(),
+  checksum: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  fileName: z.string().min(1),
+  contentType: z.string().min(1),
+  expired: z.boolean(),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+  expiresAt: z.string().nullable(),
+});
+
+export const exportListSchema = z.object({ items: z.array(exportRecordSchema) });
+
+export type ExportType = z.infer<typeof exportTypeSchema>;
+export type ExportStatus = z.infer<typeof exportStatusSchema>;
+export type ExportTransactionFilters = z.infer<typeof exportTransactionFiltersSchema>;
+export type ExportRequest = z.infer<typeof exportRequestSchema>;
+export type ExportRecord = z.infer<typeof exportRecordSchema>;

@@ -7,10 +7,7 @@ import { readAppEnv } from '@racio/config';
 import { createDatabase, schema } from '@racio/database';
 import { logAuthEvent } from './events';
 
-const env = readAppEnv();
-const database = createDatabase(env.DATABASE_URL);
-
-async function createAppleClientSecret() {
+async function createAppleClientSecret(env: ReturnType<typeof readAppEnv>) {
   if (!env.providers.apple) return undefined;
 
   const privateKey = await importPKCS8(env.APPLE_PRIVATE_KEY!.replace(/\\n/g, '\n'), 'ES256');
@@ -23,87 +20,107 @@ async function createAppleClientSecret() {
     .sign(privateKey);
 }
 
-const appleClientSecret = await createAppleClientSecret();
+export type RacioAuth = Awaited<ReturnType<typeof buildAuth>>;
 
-const socialProviders = {
-  ...(env.providers.google
-    ? {
-        google: {
-          clientId: env.GOOGLE_CLIENT_ID!,
-          clientSecret: env.GOOGLE_CLIENT_SECRET!,
-          accessType: 'offline' as const,
-        },
-      }
-    : {}),
-  ...(env.providers.apple && appleClientSecret
-    ? {
-        apple: {
-          clientId: env.APPLE_CLIENT_ID!,
-          clientSecret: appleClientSecret,
-        },
-      }
-    : {}),
-};
+let cachedAuth: Promise<RacioAuth> | undefined;
 
-export const auth = betterAuth({
-  appName: 'Racio',
-  baseURL: env.BETTER_AUTH_URL,
-  basePath: '/api/auth',
-  secret: env.betterAuthSecret,
-  database: drizzleAdapter(database.db, {
-    provider: 'pg',
-    schema: schema.authSchema,
-  }),
-  socialProviders,
-  session: {
-    expiresIn: 60 * 60 * 24 * 30,
-    updateAge: 60 * 60 * 24,
-    freshAge: 60 * 5,
-  },
-  trustedOrigins: [
-    env.BETTER_AUTH_URL,
-    ...(env.providers.apple ? ['https://appleid.apple.com'] : []),
-  ],
-  advanced: {
-    useSecureCookies: env.NODE_ENV === 'production',
-    defaultCookieAttributes: {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: env.NODE_ENV === 'production',
-    },
-  },
-  rateLimit: {
-    enabled: env.NODE_ENV === 'production',
-    window: 60,
-    max: 60,
-    customRules: {
-      '/sign-in/social': { window: 60, max: 10 },
-    },
-  },
-  databaseHooks: {
-    session: {
-      create: {
-        after: async (session) => {
-          logAuthEvent('sign_in_succeeded', { userId: session.userId });
-        },
-      },
-      delete: {
-        after: async (session) => {
-          logAuthEvent('sign_out', { userId: session.userId });
-        },
-      },
-    },
-  },
-  hooks: {
-    after: createAuthMiddleware(async (context) => {
-      if (context.path === '/sign-in/social' && !context.context.newSession) {
-        logAuthEvent('sign_in_failed');
-      }
+/**
+ * Builds the Better Auth instance lazily so that importing this module never
+ * requires environment values or a live database connection. `next build`
+ * collects page/route data without evaluating runtime configuration, and the
+ * application server builds the instance once on first use.
+ */
+async function buildAuth() {
+  const env = readAppEnv();
+  const database = createDatabase(env.DATABASE_URL);
+  const appleClientSecret = await createAppleClientSecret(env);
+
+  const socialProviders = {
+    ...(env.providers.google
+      ? {
+          google: {
+            clientId: env.GOOGLE_CLIENT_ID!,
+            clientSecret: env.GOOGLE_CLIENT_SECRET!,
+            accessType: 'offline' as const,
+          },
+        }
+      : {}),
+    ...(env.providers.apple && appleClientSecret
+      ? {
+          apple: {
+            clientId: env.APPLE_CLIENT_ID!,
+            clientSecret: appleClientSecret,
+          },
+        }
+      : {}),
+  };
+
+  return betterAuth({
+    appName: 'Racio',
+    baseURL: env.BETTER_AUTH_URL,
+    basePath: '/api/auth',
+    secret: env.betterAuthSecret,
+    database: drizzleAdapter(database.db, {
+      provider: 'pg',
+      schema: schema.authSchema,
     }),
-  },
-  plugins: [nextCookies()],
-});
+    socialProviders,
+    session: {
+      expiresIn: 60 * 60 * 24 * 30,
+      updateAge: 60 * 60 * 24,
+      freshAge: 60 * 5,
+    },
+    trustedOrigins: [
+      env.BETTER_AUTH_URL,
+      ...(env.providers.apple ? ['https://appleid.apple.com'] : []),
+    ],
+    advanced: {
+      useSecureCookies: env.NODE_ENV === 'production',
+      defaultCookieAttributes: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: env.NODE_ENV === 'production',
+      },
+    },
+    rateLimit: {
+      enabled: env.NODE_ENV === 'production',
+      window: 60,
+      max: 60,
+      customRules: {
+        '/sign-in/social': { window: 60, max: 10 },
+      },
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          after: async (session) => {
+            logAuthEvent('sign_in_succeeded', { userId: session.userId });
+          },
+        },
+        delete: {
+          after: async (session) => {
+            logAuthEvent('sign_out', { userId: session.userId });
+          },
+        },
+      },
+    },
+    hooks: {
+      after: createAuthMiddleware(async (context) => {
+        if (context.path === '/sign-in/social' && !context.context.newSession) {
+          logAuthEvent('sign_in_failed');
+        }
+      }),
+    },
+    plugins: [nextCookies()],
+  });
+}
+
+export function getAuth(): Promise<RacioAuth> {
+  cachedAuth ??= buildAuth();
+  return cachedAuth;
+}
 
 export function getAuthProviderAvailability() {
-  return { ...env.providers };
+  const providers = readAppEnv().providers;
+  return { ...providers };
 }

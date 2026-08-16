@@ -59,6 +59,7 @@ CREATE TABLE "raw_transactions" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "raw_transactions_statement_row_unique" UNIQUE("statement_id","source_row"),
+	CONSTRAINT "raw_transactions_id_user_id_unique" UNIQUE("id","user_id"),
 	CONSTRAINT "raw_transactions_source_row_positive" CHECK ("raw_transactions"."source_row" > 0)
 );
 --> statement-breakpoint
@@ -122,6 +123,7 @@ CREATE TABLE "transactions" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "transactions_source_raw_unique" UNIQUE("source_raw_transaction_id"),
+	CONSTRAINT "transactions_id_user_id_unique" UNIQUE("id","user_id"),
 	CONSTRAINT "transactions_currency_code_format" CHECK ("transactions"."currency_code" ~ '^[A-Z]{3}$')
 );
 --> statement-breakpoint

@@ -6,11 +6,33 @@ import type {
   InstitutionPatch,
 } from '@racio/contracts';
 import { normalizeInstitutionName } from '@racio/domain';
-import { schema, type RacioDatabase } from '@racio/database';
+import { inspectPostgresError, schema, type RacioDatabase } from '@racio/database';
 import { AuthBoundaryError } from './errors';
 
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+const PG_UNIQUE_VIOLATION = '23505';
+
+const INSTITUTION_NAME_UNIQUE_CONSTRAINT = 'institutions_user_normalized_name_unique';
+const ONE_ACCOUNT_PER_INSTITUTION_CONSTRAINT = 'financial_accounts_user_institution_unique';
+
+function isInstitutionNameConflict(error: unknown): boolean {
+  const info = inspectPostgresError(error);
+  if (info.code !== PG_UNIQUE_VIOLATION) return false;
+  // The insert/update targets institutions with a server-generated UUID id, so
+  // the only realistic unique violation is the per-user normalized-name rule.
+  return (
+    info.constraintName === undefined || info.constraintName === INSTITUTION_NAME_UNIQUE_CONSTRAINT
+  );
+}
+
+function isOneAccountPerInstitutionConflict(error: unknown): boolean {
+  const info = inspectPostgresError(error);
+  if (info.code !== PG_UNIQUE_VIOLATION) return false;
+  // The insert targets financial_accounts with a server-generated UUID id, so
+  // the only realistic unique violation is the one-account-per-institution rule.
+  return (
+    info.constraintName === undefined ||
+    info.constraintName === ONE_ACCOUNT_PER_INSTITUTION_CONSTRAINT
+  );
 }
 
 function ownedInstitutionWhere(userId: string, institutionId: string) {
@@ -80,7 +102,7 @@ export async function createInstitution(
       .returning();
     return publicInstitution(institution);
   } catch (error) {
-    if (isUniqueViolation(error)) {
+    if (isInstitutionNameConflict(error)) {
       throw new AuthBoundaryError('CONFLICT', 'An institution with this name already exists.');
     }
     throw error;
@@ -112,7 +134,7 @@ export async function updateInstitution(
       .returning();
     return publicInstitution(institution);
   } catch (error) {
-    if (isUniqueViolation(error)) {
+    if (isInstitutionNameConflict(error)) {
       throw new AuthBoundaryError('CONFLICT', 'An institution with this name already exists.');
     }
     throw error;
@@ -194,7 +216,7 @@ export async function createFinancialAccount(
       .returning();
     return publicAccount(account);
   } catch (error) {
-    if (isUniqueViolation(error)) {
+    if (isOneAccountPerInstitutionConflict(error)) {
       throw new AuthBoundaryError('CONFLICT', 'This institution already has an account.');
     }
     throw error;

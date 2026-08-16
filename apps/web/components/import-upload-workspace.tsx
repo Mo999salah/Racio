@@ -6,11 +6,15 @@ import { useRouter } from 'next/navigation';
 export function ImportUploadWorkspace({
   accountId,
   accountName,
+  institutionName,
+  accountCurrency,
   locale,
   labels,
 }: {
   accountId: string;
   accountName: string;
+  institutionName: string;
+  accountCurrency: string;
   locale: string;
   labels: Record<string, string>;
 }) {
@@ -40,15 +44,20 @@ export function ImportUploadWorkspace({
       error?: { code?: string };
     } | null;
     if (!response.ok || !body?.statement) {
+      const code = body?.error?.code;
       setError(
-        body?.error?.code === 'CONFLICT' ? (labels.alreadyUploaded ?? '') : (labels.error ?? ''),
+        code === 'CONFLICT'
+          ? (labels.alreadyUploaded ?? '')
+          : code && labels[`error_${code}`]
+            ? (labels[`error_${code}`] ?? labels.error ?? '')
+            : (labels.error ?? ''),
       );
       setBusy(false);
       return;
     }
     setMessage(labels.busy ?? '');
     const id = body.statement.id;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
+    for (let attempt = 0; attempt < 70; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       const statusResponse = await fetch(`/api/imports/${id}`, { cache: 'no-store' });
       const status = (await statusResponse.json()) as { processingStatus?: string };
@@ -56,34 +65,75 @@ export function ImportUploadWorkspace({
         router.push(`/${locale}/imports/${id}/mapping`);
         return;
       }
+      if (status.processingStatus === 'needs_sheet_selection') {
+        router.push(`/${locale}/imports/${id}/sheet`);
+        return;
+      }
       if (status.processingStatus === 'needs_review' || status.processingStatus === 'ready') {
         router.push(`/${locale}/imports/${id}/review`);
         return;
       }
       if (status.processingStatus === 'failed') {
-        setError(labels.error ?? '');
+        const failed = status as { lastErrorCode?: string };
+        setError(
+          failed.lastErrorCode && labels[`error_${failed.lastErrorCode}`]
+            ? (labels[`error_${failed.lastErrorCode}`] ?? labels.error ?? '')
+            : (labels.error ?? ''),
+        );
         setBusy(false);
         return;
       }
     }
-    router.push(`/${locale}/imports/${id}/review`);
+    setError(labels.timeout ?? labels.error ?? '');
+    setBusy(false);
   }
 
   return (
     <div className="import-workspace">
-      <p className="status-note">
-        <strong>{labels.account}:</strong> {accountName}
-      </p>
+      <dl className="import-source-summary">
+        <div>
+          <dt>{labels.account}</dt>
+          <dd>{accountName}</dd>
+        </div>
+        <div>
+          <dt>{labels.institution}</dt>
+          <dd>{institutionName}</dd>
+        </div>
+        <div>
+          <dt>{labels.accountCurrency}</dt>
+          <dd>{accountCurrency}</dd>
+        </div>
+      </dl>
       <form className="import-form" onSubmit={submit}>
         <label>
           {labels.chooseFile}
           <input
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,.xlsx,.pdf,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             required
           />
         </label>
+        {file && (
+          <p className="selected-file" role="status">
+            <strong>{labels.selectedFile}:</strong> {file.name} · {file.size} {labels.bytes}
+          </p>
+        )}
+        {file?.name.toLowerCase().endsWith('.xlsx') && (
+          <div className="workbook-notice">
+            <strong>{labels.workbookSecurityTitle}</strong>
+            <p>{labels.workbookSecurityNotice}</p>
+            <p>{labels.workbookUnsupportedNotice}</p>
+          </div>
+        )}
+        {file?.name.toLowerCase().endsWith('.pdf') && (
+          <div className="workbook-notice">
+            <strong>{labels.pdfSecurityTitle}</strong>
+            <p>{labels.pdfSecurityNotice}</p>
+            <p>{labels.pdfScannedNotice}</p>
+          </div>
+        )}
+        <p className="field-hint">{labels.legacyExcelNotice}</p>
         <label className="check-row">
           <input
             type="checkbox"

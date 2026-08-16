@@ -1,4 +1,4 @@
-export { auth, getAuthProviderAvailability } from './auth';
+export { getAuth, getAuthProviderAvailability, type RacioAuth } from './auth';
 export { logAuthEvent } from './events';
 export { AuthBoundaryError } from './errors';
 export {

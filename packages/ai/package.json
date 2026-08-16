@@ -9,7 +9,13 @@
     "build": "tsc --noEmit",
     "dev": "tsc --noEmit --watch",
     "lint": "eslint src",
-    "test": "node -e \"console.log('ai: disabled by default')\"",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@racio/config": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.8"
   }
 }

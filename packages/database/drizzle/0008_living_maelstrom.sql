@@ -1,0 +1,2 @@
+ALTER TABLE "transaction_splits" DROP CONSTRAINT "transaction_splits_transaction_position_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "transaction_splits_transaction_position_unique" ON "transaction_splits" USING btree ("user_id","transaction_id","position") WHERE "transaction_splits"."archived_at" IS NULL;

@@ -1,0 +1,195 @@
+# Production compose example for the MVP deployment topology.
+#
+# - One web instance (the in-process AI rate limiter and Better Auth limiter
+#   assume a single web process; see docs/deployment.md).
+# - Migrations run once as a separate one-shot service before the app starts.
+# - Secrets come from the host environment (never edit this file with real
+#   values). `BETTER_AUTH_SECRET` must be a fresh random value of at least
+#   32 characters and must NOT match any known example/default value.
+# - PostgreSQL is not published to the host.
+# - The parser has no published ports, a read-only root filesystem, bounded
+#   memory/processes, and no outbound network.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production build
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+
+name: racio
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-racio}
+      POSTGRES_USER: ${POSTGRES_USER:-racio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [racio-internal]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-racio} -d ${POSTGRES_DB:-racio}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    image: racio/migrate:${RACIO_VERSION:-0.0.0-dev}
+    build:
+      context: .
+      dockerfile: docker/migrate.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-racio}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-racio}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [racio-internal]
+    restart: 'no'
+
+  web:
+    image: racio/web:${RACIO_VERSION:-0.0.0-dev}
+    build:
+      context: .
+      dockerfile: docker/web.prod.Dockerfile
+    environment:
+      NODE_ENV: production
+      RACIO_VERSION: ${RACIO_VERSION:-0.0.0-dev}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-racio}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-racio}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL is required (https)}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
+      PARSER_URL: http://parser:8001
+      STORAGE_DRIVER: local
+      LOCAL_STORAGE_PATH: /var/lib/racio/uploads
+      PG_BOSS_SCHEMA: pgboss
+      NEXT_PUBLIC_DEFAULT_LOCALE: en
+      MAX_XLSX_ARCHIVE_BYTES: ${MAX_XLSX_ARCHIVE_BYTES:-20971520}
+      MAX_PDF_UPLOAD_BYTES: ${MAX_PDF_UPLOAD_BYTES:-20971520}
+      PARSER_TIMEOUT_MS: ${PARSER_TIMEOUT_MS:-30000}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-none}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-30000}
+      EXPORT_SYNC_MAX_ROWS: ${EXPORT_SYNC_MAX_ROWS:-10000}
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-250000}
+      EXPORT_MAX_FILE_BYTES: ${EXPORT_MAX_FILE_BYTES:-52428800}
+      EXPORT_MAX_ARCHIVE_RECORDS: ${EXPORT_MAX_ARCHIVE_RECORDS:-100000}
+      EXPORT_RETENTION_HOURS: ${EXPORT_RETENTION_HOURS:-24}
+      EXPORT_MAX_CONCURRENT_PER_USER: ${EXPORT_MAX_CONCURRENT_PER_USER:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - '0.0.0.0:${WEB_PORT:-3000}:3000'
+    volumes:
+      - racio-private-storage:/var/lib/racio/uploads
+    networks: [racio-internal]
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/health/ready']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    image: racio/worker:${RACIO_VERSION:-0.0.0-dev}
+    build:
+      context: .
+      dockerfile: docker/worker.prod.Dockerfile
+    environment:
+      NODE_ENV: production
+      RACIO_VERSION: ${RACIO_VERSION:-0.0.0-dev}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-racio}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-racio}
+      PARSER_URL: http://parser:8001
+      LOCAL_STORAGE_PATH: /var/lib/racio/uploads
+      PG_BOSS_SCHEMA: pgboss
+      PARSER_TIMEOUT_MS: ${PARSER_TIMEOUT_MS:-30000}
+      IMPORT_ORPHAN_RETENTION_HOURS: ${IMPORT_ORPHAN_RETENTION_HOURS:-24}
+      MAX_XLSX_ARCHIVE_BYTES: ${MAX_XLSX_ARCHIVE_BYTES:-20971520}
+      MAX_PDF_UPLOAD_BYTES: ${MAX_PDF_UPLOAD_BYTES:-20971520}
+      EXPORT_SYNC_MAX_ROWS: ${EXPORT_SYNC_MAX_ROWS:-10000}
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-250000}
+      EXPORT_MAX_FILE_BYTES: ${EXPORT_MAX_FILE_BYTES:-52428800}
+      EXPORT_MAX_ARCHIVE_RECORDS: ${EXPORT_MAX_ARCHIVE_RECORDS:-100000}
+      EXPORT_RETENTION_HOURS: ${EXPORT_RETENTION_HOURS:-24}
+      EXPORT_MAX_CONCURRENT_PER_USER: ${EXPORT_MAX_CONCURRENT_PER_USER:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - racio-private-storage:/var/lib/racio/uploads
+    networks: [racio-internal]
+    restart: unless-stopped
+
+  parser:
+    image: racio/parser:${RACIO_VERSION:-0.0.0-dev}
+    build:
+      context: apps/parser
+      dockerfile: ../../docker/parser.Dockerfile
+    environment:
+      PARSER_ENV: production
+      RACIO_VERSION: ${RACIO_VERSION:-0.0.0-dev}
+      PYTHONDONTWRITEBYTECODE: '1'
+      MAX_XLSX_ARCHIVE_BYTES: ${MAX_XLSX_ARCHIVE_BYTES:-20971520}
+      MAX_XLSX_UNCOMPRESSED_BYTES: ${MAX_XLSX_UNCOMPRESSED_BYTES:-104857600}
+      MAX_XLSX_COMPRESSION_RATIO: ${MAX_XLSX_COMPRESSION_RATIO:-100}
+      MAX_XLSX_ZIP_ENTRIES: ${MAX_XLSX_ZIP_ENTRIES:-2048}
+      MAX_XLSX_SHEETS: ${MAX_XLSX_SHEETS:-32}
+      MAX_XLSX_ROWS: ${MAX_XLSX_ROWS:-100000}
+      MAX_XLSX_COLUMNS: ${MAX_XLSX_COLUMNS:-256}
+      MAX_XLSX_POPULATED_CELLS: ${MAX_XLSX_POPULATED_CELLS:-500000}
+      MAX_XLSX_SHARED_STRINGS: ${MAX_XLSX_SHARED_STRINGS:-250000}
+      MAX_XLSX_CELL_STRING_LENGTH: ${MAX_XLSX_CELL_STRING_LENGTH:-20000}
+      MAX_XLSX_FORMULAS: ${MAX_XLSX_FORMULAS:-10000}
+      MAX_XLSX_MERGED_RANGES: ${MAX_XLSX_MERGED_RANGES:-2000}
+      MAX_PDF_UPLOAD_BYTES: ${MAX_PDF_UPLOAD_BYTES:-20971520}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES:-200}
+      MAX_PDF_PAGE_DIMENSION_POINTS: ${MAX_PDF_PAGE_DIMENSION_POINTS:-14400}
+      MAX_PDF_CHARS_PER_PAGE: ${MAX_PDF_CHARS_PER_PAGE:-200000}
+      MAX_PDF_TOTAL_CHARS: ${MAX_PDF_TOTAL_CHARS:-2000000}
+      MAX_PDF_WORDS_PER_PAGE: ${MAX_PDF_WORDS_PER_PAGE:-40000}
+      MAX_PDF_CANDIDATES: ${MAX_PDF_CANDIDATES:-50000}
+      MAX_PDF_STREAM_BYTES: ${MAX_PDF_STREAM_BYTES:-41943040}
+      MAX_PDF_OBJECTS: ${MAX_PDF_OBJECTS:-100000}
+    expose:
+      - '8001'
+    read_only: true
+    mem_limit: 512m
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks: [racio-internal]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  racio-internal:
+    internal: true
+
+volumes:
+  postgres-data:
+  racio-private-storage:

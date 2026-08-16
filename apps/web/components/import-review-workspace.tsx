@@ -13,15 +13,18 @@ type Row = {
   direction: string;
   reviewStatus: string;
   warnings: unknown;
+  rawPayload: unknown;
 };
 
 export function ImportReviewWorkspace({
   statementId,
   locale,
+  advanced,
   labels,
 }: {
   statementId: string;
   locale: string;
+  advanced: boolean;
   labels: Record<string, string>;
 }) {
   const router = useRouter();
@@ -57,6 +60,29 @@ export function ImportReviewWorkspace({
   const needsAttention = rows.filter(
     (row) => row.reviewStatus !== 'valid' && row.reviewStatus !== 'excluded',
   ).length;
+  function warningsFor(row: Row) {
+    return Array.isArray(row.warnings)
+      ? row.warnings.filter((warning): warning is string => typeof warning === 'string')
+      : [];
+  }
+  function workbookFor(row: Row) {
+    if (!row.rawPayload || typeof row.rawPayload !== 'object' || !('workbook' in row.rawPayload))
+      return null;
+    const workbook = row.rawPayload.workbook;
+    return workbook && typeof workbook === 'object'
+      ? (workbook as {
+          sheetName?: string;
+          sheetIndex?: number;
+          sourceRow?: number;
+          cells?: Array<{
+            coordinate?: string;
+            rawType?: string;
+            numberFormat?: string;
+            hasCachedValue?: boolean;
+          }>;
+        })
+      : null;
+  }
   async function markAllReviewed() {
     for (const row of rows.filter(
       (item) => item.reviewStatus !== 'valid' && item.reviewStatus !== 'excluded',
@@ -103,11 +129,60 @@ export function ImportReviewWorkspace({
                 />
               </label>
               <p>
-                {row.currencyCode || ''} · {row.direction}
+                {row.currencyCode || ''} · {labels[row.direction] ?? row.direction}
               </p>
               <p className={row.reviewStatus === 'valid' ? 'status-text' : 'error-text'}>
                 {labels[row.reviewStatus] ?? row.reviewStatus}
               </p>
+              {warningsFor(row).length > 0 && (
+                <div className="row-warnings" role="status">
+                  <strong>{labels.warnings}</strong>
+                  <ul>
+                    {warningsFor(row).map((warning) => (
+                      <li key={warning}>{labels[`warning_${warning}`] ?? labels.rowWarning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {advanced && workbookFor(row) && (
+                <details className="workbook-diagnostics">
+                  <summary>{labels.xlsxDiagnostics}</summary>
+                  <p>
+                    {labels.selectedWorksheet}: {workbookFor(row)?.sheetName}
+                  </p>
+                  <p>
+                    {labels.sourceRow}: {workbookFor(row)?.sourceRow}
+                  </p>
+                  <div className="sample-table-scroll" tabIndex={0}>
+                    <table className="sample-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">{labels.cellCoordinate}</th>
+                          <th scope="col">{labels.cellType}</th>
+                          <th scope="col">{labels.numberFormat}</th>
+                          <th scope="col">{labels.formulaCache}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(workbookFor(row)?.cells ?? []).map((cell, index) => (
+                          <tr key={`${row.id}-cell-${cell.coordinate ?? index}`}>
+                            <td>{cell.coordinate ?? ''}</td>
+                            <td>{cell.rawType ?? ''}</td>
+                            <td>{cell.numberFormat ?? ''}</td>
+                            <td>
+                              {cell.hasCachedValue === undefined
+                                ? labels.notApplicable
+                                : cell.hasCachedValue
+                                  ? labels.cachedValueAvailable
+                                  : labels.cachedValueUnavailable}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
             </div>
             <div className="review-actions">
               {row.reviewStatus === 'excluded' ? (

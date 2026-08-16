@@ -17,6 +17,8 @@ export function ImportSummaryWorkspace({
     reconciliationDifference: string | null;
     fileChecksum: string;
     fileSize: number;
+    sourceType: string;
+    sourceMetadata: unknown;
   };
   labels: Record<string, string>;
 }) {
@@ -38,12 +40,18 @@ export function ImportSummaryWorkspace({
     }
   }
   const mismatch = statement.reconciliationStatus === 'mismatch';
+  const sourceMetadata =
+    statement.sourceMetadata &&
+    typeof statement.sourceMetadata === 'object' &&
+    'selectedSheetName' in statement.sourceMetadata
+      ? (statement.sourceMetadata as { selectedSheetName?: string })
+      : null;
   return (
     <div className="import-summary">
       <dl className="summary-list">
         <div>
           <dt>{labels.status}</dt>
-          <dd>{statement.processingStatus}</dd>
+          <dd>{labels[statement.processingStatus] ?? statement.processingStatus}</dd>
         </div>
         <div>
           <dt>{labels.checksum}</dt>
@@ -51,8 +59,20 @@ export function ImportSummaryWorkspace({
         </div>
         <div>
           <dt>{labels.sourceFile}</dt>
-          <dd>{statement.fileSize} bytes</dd>
+          <dd>
+            {statement.fileSize} {labels.bytes}
+          </dd>
         </div>
+        <div>
+          <dt>{labels.sourceType}</dt>
+          <dd>{statement.sourceType.toUpperCase()}</dd>
+        </div>
+        {sourceMetadata?.selectedSheetName && (
+          <div>
+            <dt>{labels.selectedWorksheet}</dt>
+            <dd>{sourceMetadata.selectedSheetName}</dd>
+          </div>
+        )}
         <div>
           <dt>{labels.reconciliation}</dt>
           <dd>

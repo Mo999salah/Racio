@@ -43,6 +43,18 @@ export default async function ImportSummaryPage({
       'busy',
       'confirm',
       'error',
+      'sourceType',
+      'selectedWorksheet',
+      'bytes',
+      'uploaded',
+      'inspecting',
+      'needs_sheet_selection',
+      'parsing',
+      'needs_mapping',
+      'needs_review',
+      'ready',
+      'imported',
+      'failed',
     ].map((key) => [key, t(key)]),
   );
   return (

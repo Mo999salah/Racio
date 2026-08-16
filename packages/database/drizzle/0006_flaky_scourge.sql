@@ -109,6 +109,7 @@ CREATE TABLE "transaction_splits" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"archived_at" timestamp with time zone,
 	CONSTRAINT "transaction_splits_transaction_position_unique" UNIQUE("user_id","transaction_id","position"),
+	CONSTRAINT "transaction_splits_id_user_id_unique" UNIQUE("id","user_id"),
 	CONSTRAINT "transaction_splits_position_range" CHECK ("transaction_splits"."position" >= 0 AND "transaction_splits"."position" < 50),
 	CONSTRAINT "transaction_splits_currency_code_format" CHECK ("transaction_splits"."currency_code" ~ '^[A-Z]{3}$')
 );

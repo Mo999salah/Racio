@@ -48,6 +48,37 @@ export default async function NewImportPage({
     'error',
     'alreadyUploaded',
     'account',
+    'institution',
+    'accountCurrency',
+    'selectedFile',
+    'bytes',
+    'workbookSecurityTitle',
+    'workbookSecurityNotice',
+    'workbookUnsupportedNotice',
+    'legacyExcelNotice',
+    'timeout',
+    'error_XLSX_UNSUPPORTED_LEGACY_EXCEL',
+    'error_XLSX_MACRO_ENABLED',
+    'error_XLSX_INVALID_WORKBOOK',
+    'error_XLSX_INVALID_XML',
+    'error_XLSX_PATH_TRAVERSAL',
+    'error_XLSX_ARCHIVE_LIMIT_EXCEEDED',
+    'error_XLSX_PASSWORD_PROTECTED',
+    'error_XLSX_EXTERNAL_LINKS_UNSUPPORTED',
+    'error_XLSX_UNSUPPORTED_CONTENT',
+    'error_XLSX_NO_USABLE_SHEET',
+    'error_XLSX_SHEET_LIMIT_EXCEEDED',
+    'error_XLSX_ROW_LIMIT_EXCEEDED',
+    'error_XLSX_COLUMN_LIMIT_EXCEEDED',
+    'error_XLSX_CELL_LIMIT_EXCEEDED',
+    'error_XLSX_SHARED_STRING_LIMIT_EXCEEDED',
+    'error_XLSX_CELL_STRING_LIMIT_EXCEEDED',
+    'error_XLSX_FORMULA_LIMIT_EXCEEDED',
+    'error_XLSX_MERGED_RANGE_LIMIT_EXCEEDED',
+    'error_XLSX_PARSER_TIMEOUT',
+    'error_XLSX_STALE_SHEET_SELECTION',
+    'error_XLSX_INSPECTION_FAILED',
+    'error_XLSX_PARSE_FAILED',
   ];
   const labels = Object.fromEntries(keys.map((key) => [key, t(key)]));
   return (
@@ -62,6 +93,8 @@ export default async function NewImportPage({
         <ImportUploadWorkspace
           accountId={account.id}
           accountName={account.displayName}
+          institutionName={account.institutionName}
+          accountCurrency={account.currencyCode}
           locale={locale}
           labels={labels}
         />

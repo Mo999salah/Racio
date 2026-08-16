@@ -4,10 +4,27 @@ export type StoredObject = {
   size: number;
 };
 
+export type StoredObjectRef = {
+  key: string;
+  modifiedAt: Date;
+};
+
 export interface PrivateStorage {
   put(key: string, content: Uint8Array, contentType: string): Promise<StoredObject>;
+  /** Streams bounded chunks to the final object; used to keep export memory bounded. */
+  putChunks(
+    key: string,
+    chunks: AsyncIterable<Uint8Array>,
+    contentType: string,
+  ): Promise<StoredObject>;
   get(key: string): Promise<Uint8Array>;
   delete(key: string): Promise<void>;
+  /**
+   * Bounded listing of objects under a key prefix, newest first. Used only by
+   * cleanup reconcilers that compare stored objects against live database
+   * references; callers must never render keys to clients.
+   */
+  list(prefix: string): Promise<StoredObjectRef[]>;
 }
 
 export type S3CompatibleStorageOptions = {
@@ -42,8 +59,28 @@ export function createLocalPrivateStorage(options: LocalStorageOptions): Private
       assertSafeStorageKey(key);
       const target = join(root, key);
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, content, { flag: 'wx', mode: 0o600 });
+      // Overwrite-safe: storage keys are random UUIDs for uploads and
+      // deterministic per export id for exports, so a retry rewrites the
+      // same key instead of failing or duplicating an artifact.
+      await writeFile(target, content, { flag: 'w', mode: 0o600 });
       return { key, contentType, size: content.byteLength };
+    },
+    async putChunks(key, chunks, contentType) {
+      assertSafeStorageKey(key);
+      const target = join(root, key);
+      await mkdir(dirname(target), { recursive: true });
+      const handle = await open(target, 'w', 0o600);
+      try {
+        let size = 0;
+        for await (const chunk of chunks) {
+          if (chunk.byteLength === 0) continue;
+          await handle.writeFile(chunk);
+          size += chunk.byteLength;
+        }
+        return { key, contentType, size };
+      } finally {
+        await handle.close();
+      }
     },
     async get(key) {
       assertSafeStorageKey(key);
@@ -53,11 +90,35 @@ export function createLocalPrivateStorage(options: LocalStorageOptions): Private
       assertSafeStorageKey(key);
       await unlink(join(root, key));
     },
+    async list(prefix) {
+      assertSafeStorageKey(prefix);
+      const base = join(root, prefix);
+      let items;
+      try {
+        items = await readdir(base, { withFileTypes: true, recursive: true });
+      } catch {
+        return [];
+      }
+      const refs: StoredObjectRef[] = [];
+      for (const item of items) {
+        if (!item.isFile()) continue;
+        const relativePath = join(item.parentPath ?? item.path, item.name).slice(base.length + 1);
+        if (!relativePath) continue;
+        const key = `${prefix}/${relativePath.replaceAll('\\', '/')}`;
+        const statResult = await statSafe(join(root, key));
+        if (statResult) refs.push({ key, modifiedAt: statResult.mtime });
+      }
+      refs.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime());
+      return refs;
+    },
   };
 }
 
-export function createRandomStorageKey(prefix = 'statements'): string {
-  return `${prefix}/${randomUUID()}.csv`;
+export function createRandomStorageKey(
+  prefix = 'statements',
+  extension: 'csv' | 'xlsx' | 'pdf' = 'csv',
+): string {
+  return `${prefix}/${randomUUID()}.${extension}`;
 }
 
 export const storageBoundary = {
@@ -65,5 +126,13 @@ export const storageBoundary = {
   s3: 'reserved-for-s3-compatible-adapter',
 } as const;
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { open, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
+
+async function statSafe(path: string) {
+  try {
+    return await stat(path);
+  } catch {
+    return undefined;
+  }
+}

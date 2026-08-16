@@ -10,9 +10,14 @@ dependencies = [
   "pdfplumber>=0.11,<1",
   "pydantic>=2.10,<3",
   "python-multipart>=0.0.20,<1",
-  "pypdf>=5,<7",
+  "pypdf>=6.15,<7",
   "uvicorn[standard]>=0.34,<1",
 ]
+
+[tool.uv]
+# Security fixes for transitive dependencies (pip-audit gate):
+# cryptography is pulled by pdfminer-six (pdfplumber); pin the patched line.
+override-dependencies = ["cryptography>=50,<51"]
 
 [build-system]
 requires = ["hatchling"]
@@ -25,8 +30,13 @@ packages = ["src/racio_parser"]
 dev = [
   "httpx>=0.28,<1",
   "mypy>=1.15,<2",
-  "pytest>=8.3,<9",
+  "pytest>=9.0.3,<10",
   "ruff>=0.9,<1",
+]
+fixtures = [
+  "arabic-reshaper>=3.0,<4",
+  "python-bidi>=0.6,<1",
+  "reportlab>=4.2,<5",
 ]
 
 [tool.ruff]

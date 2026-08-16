@@ -1,13 +1,9 @@
-export type AiAvailability = 'disabled' | 'available';
-
-export type AiProvider = {
-  readonly id: string;
-  answer(input: { question: string; queryPlan: unknown }): Promise<{ text: string }>;
-};
-
-export type AiRuntime = {
-  availability: AiAvailability;
-  provider?: AiProvider;
-};
-
-export const disabledAi: AiRuntime = { availability: 'disabled' };
+export { AiError, isAiError, type AiErrorCode } from './errors';
+export {
+  ADVISOR_SYSTEM_PROMPT,
+  ADVISOR_REPAIR_PROMPT,
+  ADVISOR_SYSTEM_PROMPT_VERSION,
+} from './prompts';
+export { createAiRuntime, providerIdentity } from './runtime';
+export type { AiAvailability, AiProvider, AiRequest, AiResponse, AiRuntime } from './types';
+export { disabledAi } from './disabled';

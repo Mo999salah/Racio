@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   confirmImport,
   createCsvImport,
+  createXlsxImport,
   getImportReview,
   getOwnedStatement,
   listOwnedImports,
   processCsvParseJob,
+  processXlsxInspectionJob,
+  processXlsxParseJob,
   saveImportMapping,
+  selectXlsxSheet,
   updateRawTransaction,
 } from '../src/index';
 
@@ -15,6 +19,7 @@ describe('import application boundary', () => {
     expect(
       [
         createCsvImport,
+        createXlsxImport,
         getOwnedStatement,
         listOwnedImports,
         saveImportMapping,
@@ -22,6 +27,9 @@ describe('import application boundary', () => {
         updateRawTransaction,
         confirmImport,
         processCsvParseJob,
+        processXlsxInspectionJob,
+        processXlsxParseJob,
+        selectXlsxSheet,
       ].every((service) => typeof service === 'function'),
     ).toBe(true);
   });

@@ -2,14 +2,20 @@ import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { importUploadSchema } from '@racio/contracts';
 import { AuthBoundaryError, requireSession } from '@racio/auth';
-import { createCsvImport, listOwnedImports } from '@racio/imports';
+import {
+  createCsvImport,
+  createPdfImport,
+  createXlsxImport,
+  listOwnedImports,
+} from '@racio/imports';
 import { readAppEnv } from '@racio/config';
 import { headers } from 'next/headers';
 import { database } from '../../../lib/database';
-import { privateStorage } from '../../../lib/storage';
-import { enqueueCsvParse } from '../../../lib/jobs';
+import { getPrivateStorage } from '../../../lib/storage';
+import { enqueueImportJob } from '../../../lib/jobs';
 import { apiError } from '../../../lib/api-errors';
 import { assertSameOrigin } from '../../../lib/request-security';
+import { validateStatementUpload } from '../../../lib/import-upload-validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,8 +48,16 @@ export async function POST(request: Request) {
       throw new AuthBoundaryError('CONFLICT', 'Upload rate limit reached.');
     else current.count += 1;
     const form = await request.formData();
-    const file = form.get('file');
-    if (!(file instanceof File)) throw new AuthBoundaryError('VALIDATION', 'CSV file is required.');
+    const fileEntry = form.get('file');
+    if (
+      !fileEntry ||
+      typeof fileEntry === 'string' ||
+      typeof fileEntry.name !== 'string' ||
+      typeof fileEntry.size !== 'number' ||
+      typeof fileEntry.arrayBuffer !== 'function'
+    )
+      throw new AuthBoundaryError('VALIDATION', 'A statement file is required.');
+    const file = fileEntry;
     const parsed = importUploadSchema.safeParse({
       accountId: form.get('accountId'),
       retainOriginalFile: form.get('retainOriginalFile') === 'true',
@@ -52,23 +66,30 @@ export async function POST(request: Request) {
     });
     if (!parsed.success) throw new AuthBoundaryError('VALIDATION', 'Invalid import values.');
     const env = readAppEnv();
+    const lowerFilename = file.name.toLowerCase();
+    const uploadLimit = lowerFilename.endsWith('.xlsx')
+      ? Math.min(env.MAX_UPLOAD_BYTES, env.MAX_XLSX_ARCHIVE_BYTES)
+      : lowerFilename.endsWith('.pdf')
+        ? Math.min(env.MAX_UPLOAD_BYTES, env.MAX_PDF_UPLOAD_BYTES)
+        : env.MAX_UPLOAD_BYTES;
+    if (file.size <= 0 || file.size > uploadLimit)
+      throw new AuthBoundaryError(
+        lowerFilename.endsWith('.xlsx')
+          ? 'XLSX_ARCHIVE_LIMIT_EXCEEDED'
+          : lowerFilename.endsWith('.pdf')
+            ? 'PDF_UPLOAD_LIMIT_EXCEEDED'
+            : 'VALIDATION',
+        'The uploaded file exceeds the allowed size.',
+      );
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.byteLength === 0 || bytes.byteLength > env.MAX_UPLOAD_BYTES)
-      throw new AuthBoundaryError('VALIDATION', 'CSV file is too large or empty.');
-    const signature = new TextDecoder().decode(bytes.slice(0, 4096));
-    const binaryMime = new Set([
-      'application/pdf',
-      'application/zip',
-      'application/x-7z-compressed',
-      'application/vnd.ms-excel',
-    ]);
-    if (
-      !file.name.toLowerCase().endsWith('.csv') ||
-      binaryMime.has(file.type) ||
-      bytes.includes(0) ||
-      !/[;,\t]/u.test(signature)
-    )
-      throw new AuthBoundaryError('VALIDATION', 'Only safe CSV files are accepted.');
+    const sourceType = validateStatementUpload({
+      filename: file.name,
+      mediaType: file.type,
+      bytes,
+      maxCsvBytes: env.MAX_UPLOAD_BYTES,
+      maxXlsxBytes: Math.min(env.MAX_UPLOAD_BYTES, env.MAX_XLSX_ARCHIVE_BYTES),
+      maxPdfBytes: Math.min(env.MAX_UPLOAD_BYTES, env.MAX_PDF_UPLOAD_BYTES),
+    });
     const filename =
       basename(file.name)
         .split('')
@@ -77,16 +98,30 @@ export async function POST(request: Request) {
           return code < 32 || code === 127 ? '_' : character;
         })
         .join('')
-        .slice(0, 240) || 'statement.csv';
+        .slice(0, 240) || `statement.${sourceType}`;
     const checksum = createHash('sha256').update(bytes).digest('hex');
-    const result = await createCsvImport(database.db, privateStorage, session.user.id, {
+    const createImport =
+      sourceType === 'xlsx'
+        ? createXlsxImport
+        : sourceType === 'pdf'
+          ? createPdfImport
+          : createCsvImport;
+    const result = await createImport(database.db, getPrivateStorage(), session.user.id, {
       ...parsed.data,
       filename,
       size: bytes.byteLength,
       checksum,
       bytes,
     });
-    if (result.jobId) await enqueueCsvParse(result.jobId);
+    if (result.jobId)
+      await enqueueImportJob(
+        sourceType === 'xlsx'
+          ? 'statement.inspect.xlsx'
+          : sourceType === 'pdf'
+            ? 'statement.inspect.pdf'
+            : 'statement.parse.csv',
+        result.jobId,
+      );
     return Response.json(result, {
       status: result.duplicate ? 200 : 202,
       headers: { 'Cache-Control': 'no-store' },

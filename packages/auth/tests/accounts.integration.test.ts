@@ -98,4 +98,23 @@ suite('financial account ownership integration', () => {
     await restoreFinancialAccount(db, userA, accountId);
     expect(await listFinancialAccounts(db, userA)).toHaveLength(1);
   });
+
+  it('lets a different user create their own account for their own institution', async () => {
+    const otherInstitution = await createInstitution(db, userB, {
+      name: 'Second Integration Bank',
+      countryCode: 'TR',
+    });
+    const otherAccount = await createFinancialAccount(db, userB, {
+      institutionId: otherInstitution.id,
+      displayName: 'B account',
+      accountType: 'checking',
+      currencyCode: 'TRY',
+    });
+    expect(otherAccount.id).toBeTruthy();
+    expect(otherAccount.displayName).toBe('B account');
+    await db
+      .delete(schema.financialAccounts)
+      .where(eq(schema.financialAccounts.id, otherAccount.id));
+    await db.delete(schema.institutions).where(eq(schema.institutions.id, otherInstitution.id));
+  });
 });

@@ -1,10 +1,11 @@
-import { auth, logAuthEvent, requireSession } from '@racio/auth';
+import { getAuth, logAuthEvent, requireSession } from '@racio/auth';
 import { sessionIdSchema } from '@racio/contracts';
 import { schema } from '@racio/database';
 import { and, eq } from 'drizzle-orm';
 import { database } from '../../../lib/database';
 import { headers } from 'next/headers';
 import { apiError } from '../../../lib/api-errors';
+import { assertSameOrigin } from '../../../lib/request-security';
 
 export const runtime = 'nodejs';
 
@@ -12,6 +13,7 @@ export async function GET() {
   try {
     const requestHeaders = await headers();
     await requireSession(requestHeaders);
+    const auth = await getAuth();
     const sessions = await auth.api.listSessions({ headers: requestHeaders });
     return Response.json(
       sessions.map((item) => ({
@@ -48,6 +50,7 @@ export async function DELETE(request: Request) {
         { error: { code: 'NOT_FOUND', message: 'The requested session does not exist.' } },
         { status: 404 },
       );
+    const auth = await getAuth();
     await auth.api.revokeSession({ headers: requestHeaders, body: { token: ownedSession.token } });
     logAuthEvent('session_revoked', { userId: session.user.id });
     return Response.json({ status: true });
@@ -58,15 +61,18 @@ export async function DELETE(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    assertSameOrigin(request);
     const requestHeaders = await headers();
     const session = await requireSession(requestHeaders);
     const action = request.headers.get('x-racio-session-action');
     if (action === 'revoke-others') {
+      const auth = await getAuth();
       await auth.api.revokeOtherSessions({ headers: requestHeaders });
       logAuthEvent('sessions_revoked_other', { userId: session.user.id });
       return Response.json({ status: true });
     }
     if (action === 'revoke-all') {
+      const auth = await getAuth();
       await auth.api.revokeSessions({ headers: requestHeaders });
       logAuthEvent('sessions_revoked_all', { userId: session.user.id });
       return Response.json({ status: true });

@@ -21,6 +21,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm build
+      - run: pnpm validate:docs
+      - run: pnpm format:check
 
   parser:
     runs-on: ubuntu-latest
@@ -32,5 +35,102 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --dev
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
       - run: uv run mypy .
       - run: uv run pytest
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: racio
+          POSTGRES_USER: racio
+          POSTGRES_PASSWORD: racio_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U racio -d racio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Clean migration install from an empty database
+        run: pnpm --filter @racio/database db:migrate
+        env:
+          DATABASE_URL: postgresql://racio:racio_dev@localhost:5432/racio
+      - name: Verify schema against migrations
+        run: pnpm --filter @racio/database exec drizzle-kit check
+        env:
+          DATABASE_URL: postgresql://racio:racio_dev@localhost:5432/racio
+      - name: Real PostgreSQL integration suites
+        run: pnpm test --force
+        env:
+          DATABASE_URL: postgresql://racio:racio_dev@localhost:5432/racio
+          RACIO_RUN_DB_INTEGRATION: '1'
+
+  playwright:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: racio
+          POSTGRES_USER: racio
+          POSTGRES_PASSWORD: racio_dev
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U racio -d racio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @racio/database db:migrate
+        env:
+          DATABASE_URL: postgresql://racio:racio_dev@localhost:5433/racio
+      - name: Start the parser service
+        run: |
+          cd apps/parser
+          uv sync --dev
+          uv run uvicorn racio_parser.main:app --port 8001 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8001/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:8001/health
+      - name: Playwright browser install
+        run: pnpm --filter @racio/web exec playwright install --with-deps chromium
+      - name: Critical browser flows (Chromium)
+        run: pnpm --filter @racio/web test:e2e --project=chromium
+        env:
+          RACIO_TEST_DATABASE_URL: postgresql://racio:racio_dev@localhost:5433/racio
+      - name: Production-mode security verification
+        run: |
+          pnpm --filter @racio/web build
+          pnpm --filter @racio/web test:e2e:prod
+        env:
+          DATABASE_URL: postgresql://racio:racio_dev@localhost:5433/racio
+          RACIO_TEST_DATABASE_URL: postgresql://racio:racio_dev@localhost:5433/racio
+          BETTER_AUTH_SECRET: ci-build-secret-value-that-is-long-enough-42
+          BETTER_AUTH_URL: https://racio.example.test

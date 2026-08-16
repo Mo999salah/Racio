@@ -1,0 +1,30 @@
+{
+  "name": "@racio/advisor",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "dev": "tsc --noEmit --watch",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@racio/ai": "workspace:*",
+    "@racio/auth": "workspace:*",
+    "@racio/config": "workspace:*",
+    "@racio/contracts": "workspace:*",
+    "@racio/database": "workspace:*",
+    "@racio/domain": "workspace:*",
+    "@racio/planning": "workspace:*",
+    "@racio/transactions": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.8"
+  }
+}

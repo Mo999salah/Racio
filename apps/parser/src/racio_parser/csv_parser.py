@@ -6,7 +6,7 @@ import re
 import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal, cast
 
 from .models import (
     CsvMapping,
@@ -283,7 +283,7 @@ def parse_csv(
                 valueDate=value_date,
                 amount=amount,
                 currency=currency,
-                direction=direction,
+                direction=cast(Literal["credit", "debit", "unknown"], direction),
                 balanceAfter=_decimal(
                     balance_raw, mapping.decimalSeparator, mapping.thousandsSeparator
                 ),
@@ -302,7 +302,7 @@ def parse_csv(
         contractVersion="racio.parser.v2",
         source=source,
         mapping=CsvMappingResult(
-            status=mapping_status,
+            status=cast(Literal["confident", "ambiguous", "invalid"], mapping_status),
             columns=mapping,
             confidence=mapping_confidence,
             warnings=mapping_warnings,

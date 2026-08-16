@@ -1,0 +1,1 @@
+ALTER TYPE "public"."statement_source_type" ADD VALUE 'pdf';

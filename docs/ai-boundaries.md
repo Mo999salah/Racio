@@ -19,6 +19,12 @@ server validates the plan against an allow-list of fields, filters, grouping,
 date ranges, and limits, then runs trusted code. Model-generated SQL is never
 executed and model output never becomes a financial total.
 
+Phase 11 implements this boundary: `packages/ai` owns the provider abstraction
+and versioned prompts, and `packages/advisor` owns a deterministic planner, an
+approved typed tool catalog, the advisor service, preview-and-confirm
+proposals, and user-owned threads/messages/proposals persistence. See
+`docs/ai-advisor.md` for the implementation contract.
+
 ## Data minimisation and prompt injection
 
 Send only the minimum data needed for an approved task. Transaction text,

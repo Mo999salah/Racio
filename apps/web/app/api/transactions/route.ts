@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import { database } from '../../../lib/database';
 import { apiError } from '../../../lib/api-errors';
 import { assertSameOrigin } from '../../../lib/request-security';
+import { enqueueAlertEvaluation } from '../../../lib/jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,7 +34,9 @@ export async function POST(request: Request) {
     const parsed = (await import('@racio/contracts')).transactionBulkActionSchema.safeParse(body);
     if (!parsed.success)
       throw new AuthBoundaryError('VALIDATION', 'Invalid bulk transaction action.');
-    return Response.json(await bulkUpdateTransactions(database.db, session.user.id, parsed.data));
+    const result = await bulkUpdateTransactions(database.db, session.user.id, parsed.data);
+    enqueueAlertEvaluation(session.user.id).catch(() => undefined);
+    return Response.json(result);
   } catch (error) {
     return apiError(error);
   }

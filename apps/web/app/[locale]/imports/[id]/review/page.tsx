@@ -36,7 +36,11 @@ export default async function ImportReviewPage({
       'date',
       'descriptionField',
       'amount',
+      'debit',
+      'credit',
+      'unknown',
       'valid',
+      'excluded',
       'needs_review',
       'invalid',
       'duplicate_candidate',
@@ -47,8 +51,55 @@ export default async function ImportReviewPage({
       'confirm',
       'empty',
       'error',
+      'warnings',
+      'rowWarning',
+      'xlsxDiagnostics',
+      'selectedWorksheet',
+      'sourceRow',
+      'cellCoordinate',
+      'cellType',
+      'numberFormat',
+      'formulaCache',
+      'notApplicable',
+      'cachedValueAvailable',
+      'cachedValueUnavailable',
+      'warning_formula_cached_value',
+      'warning_formula_value_unavailable',
+      'warning_precision_normalized_from_display_format',
+      'warning_ambiguous_booking_date',
+      'warning_invalid_booking_date',
+      'warning_invalid_amount',
+      'warning_unknown_direction',
+      'warning_missing_description',
+      'warning_possible_summary_row',
+      'pdfInspection',
+      'pdfPages',
+      'pdfTextExtraction',
+      'pdfHasUsableText',
+      'pdfImageOnly',
+      'pdfLikelyImageOnly',
+      'warnings',
     ].map((key) => [key, t(key)]),
   );
+  const sourceMetadata =
+    statement.sourceMetadata &&
+    typeof statement.sourceMetadata === 'object' &&
+    'selectedSheetName' in statement.sourceMetadata
+      ? (statement.sourceMetadata as { selectedSheetName?: string })
+      : null;
+  const pdfInspection =
+    statement.pdfInspection &&
+    typeof statement.pdfInspection === 'object' &&
+    'sourceType' in statement.pdfInspection &&
+    statement.pdfInspection.sourceType === 'pdf'
+      ? (statement.pdfInspection as {
+          pageCount?: number;
+          hasUsableText?: boolean;
+          likelyImageOnly?: boolean;
+          textUsability?: string;
+          documentWarnings?: unknown;
+        })
+      : null;
   return (
     <AccountShell locale={locale} name={user.name}>
       <ThemeSync appearance={preferences.appearance} />
@@ -60,6 +111,8 @@ export default async function ImportReviewPage({
             {t(
               statement.processingStatus as
                 | 'uploaded'
+                | 'inspecting'
+                | 'needs_sheet_selection'
                 | 'parsing'
                 | 'needs_mapping'
                 | 'needs_review'
@@ -68,8 +121,51 @@ export default async function ImportReviewPage({
                 | 'failed',
             )}
           </p>
+          {sourceMetadata?.selectedSheetName && (
+            <p>
+              {t('selectedWorksheet')}: {sourceMetadata.selectedSheetName}
+            </p>
+          )}
+          {pdfInspection && (
+            <details className="workbook-diagnostics">
+              <summary>{labels.pdfInspection}</summary>
+              <p>
+                {labels.pdfPages}: {pdfInspection.pageCount}
+              </p>
+              <p>
+                {labels.pdfTextExtraction}: {pdfInspection.textUsability ?? ''}
+              </p>
+              <p>
+                {pdfInspection.hasUsableText
+                  ? labels.pdfHasUsableText
+                  : pdfInspection.likelyImageOnly
+                    ? labels.pdfLikelyImageOnly
+                    : labels.pdfImageOnly}
+              </p>
+              {Array.isArray(pdfInspection.documentWarnings) &&
+                pdfInspection.documentWarnings.filter(
+                  (warning): warning is string => typeof warning === 'string',
+                ).length > 0 && (
+                  <div className="row-warnings" role="status">
+                    <strong>{labels.warnings}</strong>
+                    <ul>
+                      {pdfInspection.documentWarnings
+                        .filter((warning): warning is string => typeof warning === 'string')
+                        .map((warning) => (
+                          <li key={warning}>{labels[`warning_${warning}`] ?? labels.rowWarning}</li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
+            </details>
+          )}
         </div>
-        <ImportReviewWorkspace statementId={id} locale={locale} labels={labels} />
+        <ImportReviewWorkspace
+          statementId={id}
+          locale={locale}
+          advanced={preferences.interfaceMode === 'advanced'}
+          labels={labels}
+        />
       </section>
     </AccountShell>
   );

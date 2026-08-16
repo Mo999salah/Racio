@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import { database } from '../../../../../lib/database';
 import { apiError } from '../../../../../lib/api-errors';
 import { assertSameOrigin } from '../../../../../lib/request-security';
+import { enqueueAlertEvaluation } from '../../../../../lib/jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,14 +17,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const parsed = transactionClassificationPatchSchema.safeParse(await request.json());
     if (!parsed.success)
       throw new AuthBoundaryError('VALIDATION', 'Invalid transaction classification.');
-    return Response.json(
-      await updateTransactionClassification(
-        database.db,
-        session.user.id,
-        (await params).id,
-        parsed.data,
-      ),
+    const result = await updateTransactionClassification(
+      database.db,
+      session.user.id,
+      (await params).id,
+      parsed.data,
     );
+    enqueueAlertEvaluation(session.user.id).catch(() => undefined);
+    return Response.json(result);
   } catch (error) {
     return apiError(error);
   }

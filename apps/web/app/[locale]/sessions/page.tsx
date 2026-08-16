@@ -1,7 +1,7 @@
 import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { AuthBoundaryError, auth, requireUser } from '@racio/auth';
+import { AuthBoundaryError, getAuth, requireUser } from '@racio/auth';
 import { AccountShell } from '../../../components/account-shell';
 import { SessionList } from '../../../components/session-list';
 
@@ -18,7 +18,7 @@ export default async function SessionsPage({ params }: { params: Promise<{ local
     if (!(error instanceof AuthBoundaryError)) throw error;
     redirect(`/${locale}/sign-in?returnTo=/${locale}/sessions`);
   }
-  const sessions = await auth.api.listSessions({ headers: requestHeaders });
+  const sessions = await (await getAuth()).api.listSessions({ headers: requestHeaders });
   const t = await getTranslations('sessions');
   const labels = {
     revokeOthers: t('revokeOthers'),

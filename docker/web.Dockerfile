@@ -1,6 +1,9 @@
+# Development web image: hot-reload via `next dev`. Production deployments
+# must use docker/web.prod.Dockerfile (see docker-compose.prod.yml).
+
 FROM node:24-alpine
 WORKDIR /app
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY packages packages

@@ -1,0 +1,1 @@
+ALTER TABLE "statements" ADD COLUMN "pdf_inspection" jsonb;

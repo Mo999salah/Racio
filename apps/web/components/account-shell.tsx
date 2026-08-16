@@ -1,4 +1,8 @@
 import { getTranslations } from 'next-intl/server';
+import { headers } from 'next/headers';
+import { getSession } from '@racio/auth';
+import { unreadAlertCount } from '@racio/planning';
+import { database } from '../lib/database';
 import { SignOutButton } from './sign-out-button';
 
 export async function AccountShell({
@@ -11,6 +15,8 @@ export async function AccountShell({
   children: React.ReactNode;
 }) {
   const t = await getTranslations();
+  const session = await getSession(await headers());
+  const unread = session ? await unreadAlertCount(database.db, session.user.id) : 0;
   return (
     <main className="racio-shell">
       <header className="racio-topbar">
@@ -39,6 +45,22 @@ export async function AccountShell({
           </a>
           <a className="nav-link" href={`/${locale}/transfers`}>
             {t('nav.transfers')}
+          </a>
+          <a className="nav-link" href={`/${locale}/budgets`}>
+            {t('nav.budgets')}
+          </a>
+          <a className="nav-link" href={`/${locale}/goals`}>
+            {t('nav.goals')}
+          </a>
+          <a className="nav-link" href={`/${locale}/alerts`}>
+            {t('nav.alerts')}
+            {unread > 0 ? <span className="nav-unread">{unread}</span> : null}
+          </a>
+          <a className="nav-link" href={`/${locale}/advisor`}>
+            {t('nav.advisor')}
+          </a>
+          <a className="nav-link" href={`/${locale}/export`}>
+            {t('nav.export')}
           </a>
           <a className="nav-link" href={`/${locale}/settings`}>
             {t('nav.settings')}

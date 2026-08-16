@@ -3,6 +3,7 @@ import {
   and,
   asc,
   count,
+  countDistinct,
   desc,
   eq,
   exists,
@@ -11,6 +12,7 @@ import {
   inArray,
   isNull,
   lte,
+  notExists,
   or,
   sql,
 } from 'drizzle-orm';
@@ -20,6 +22,8 @@ import type {
   CategoryPatch,
   ClassificationRuleCreate,
   ClassificationRulePatch,
+  DashboardQuery,
+  DashboardSummary,
   SavedViewCreate,
   SavedViewPatch,
   TagCreate,
@@ -36,11 +40,13 @@ import {
   mergeRuleActions,
   matchClassificationRule,
   validateRuleDocument,
+  scaledIntegerToDecimal,
   type ClassifiableTransaction,
   type RuleDocument,
 } from '@racio/domain';
-import { schema, type RacioDatabase } from '@racio/database';
+import { schema, type RacioDatabase, isPostgresUniqueViolationOn } from '@racio/database';
 import { AuthBoundaryError } from '@racio/auth';
+import { resolveAccountKnownBalance } from './balance';
 
 type QueryDb = Pick<RacioDatabase, 'select' | 'insert' | 'update' | 'delete'>;
 
@@ -76,8 +82,23 @@ function normalizeLabel(value: string): string {
   return value.trim().normalize('NFKC').replace(/\s+/gu, ' ').toLocaleLowerCase('en-US');
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+const CATEGORY_ROOT_NAME_UNIQUE = 'categories_user_root_name_unique';
+const CATEGORY_PARENT_NAME_UNIQUE = 'categories_user_parent_name_unique';
+const TAG_NAME_UNIQUE = 'tags_user_normalized_name_unique';
+
+function isCategoryNameConflict(error: unknown): boolean {
+  // Category inserts/updates generate a server UUID id, so the only realistic
+  // unique violations are the per-user root/child normalized-name rules.
+  return (
+    isPostgresUniqueViolationOn(error, CATEGORY_ROOT_NAME_UNIQUE) ||
+    isPostgresUniqueViolationOn(error, CATEGORY_PARENT_NAME_UNIQUE)
+  );
+}
+
+function isTagNameConflict(error: unknown): boolean {
+  // Tag inserts/updates generate a server UUID id, so the only realistic
+  // unique violation is the per-user normalized-name rule.
+  return isPostgresUniqueViolationOn(error, TAG_NAME_UNIQUE);
 }
 
 function notFound(message: string): never {
@@ -96,10 +117,10 @@ function safeJsonArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-async function assertOwnedFilterReferences(
+export async function assertOwnedFilterReferences(
   db: RacioDatabase,
   userId: string,
-  input: TransactionListQuery,
+  input: TransactionListQuery | TransactionFilterFields,
 ) {
   if (input.accountId) {
     const [row] = await db
@@ -225,12 +246,37 @@ function attachClassification<T extends { id: string }>(
   });
 }
 
-export async function listTransactions(
+export type TransactionFilterFields = Pick<
+  TransactionListQuery,
+  | 'dateFrom'
+  | 'dateTo'
+  | 'accountId'
+  | 'institutionId'
+  | 'direction'
+  | 'currency'
+  | 'primaryCategoryId'
+  | 'secondaryCategoryId'
+  | 'tagId'
+  | 'reviewed'
+  | 'categorised'
+  | 'statementId'
+  | 'search'
+  | 'amountExact'
+  | 'amountMin'
+  | 'amountMax'
+  | 'includeArchived'
+>;
+
+/**
+ * Shared ledger predicate used by listTransactions and by the export
+ * boundary, so an export always represents exactly the same dataset as the
+ * validated ledger filters.
+ */
+export function buildTransactionFilterConditions(
   db: RacioDatabase,
   userId: string,
-  input: TransactionListQuery,
-) {
-  await assertOwnedFilterReferences(db, userId, input);
+  input: TransactionFilterFields,
+): SQL[] {
   const conditions: SQL[] = [eq(schema.transactions.userId, userId)];
   if (input.includeArchived !== 'true')
     conditions.push(eq(schema.transactions.status, 'confirmed'));
@@ -348,6 +394,16 @@ export async function listTransactions(
       )!,
     );
   }
+  return conditions;
+}
+
+export async function listTransactions(
+  db: RacioDatabase,
+  userId: string,
+  input: TransactionListQuery,
+) {
+  await assertOwnedFilterReferences(db, userId, input);
+  const conditions = buildTransactionFilterConditions(db, userId, input);
   const where = and(...conditions);
   const [countRows, rows] = await Promise.all([
     db
@@ -853,7 +909,7 @@ export async function createCategory(db: RacioDatabase, userId: string, input: C
       .returning();
     return row;
   } catch (error) {
-    if (isUniqueViolation(error)) conflict('A category with this name already exists here.');
+    if (isCategoryNameConflict(error)) conflict('A category with this name already exists here.');
     throw error;
   }
 }
@@ -887,7 +943,7 @@ export async function updateCategory(
       .returning();
     return row;
   } catch (error) {
-    if (isUniqueViolation(error)) conflict('A category with this name already exists here.');
+    if (isCategoryNameConflict(error)) conflict('A category with this name already exists here.');
     throw error;
   }
 }
@@ -991,7 +1047,7 @@ export async function createTag(db: RacioDatabase, userId: string, input: TagCre
       .returning();
     return row;
   } catch (error) {
-    if (isUniqueViolation(error)) conflict('A tag with this name already exists.');
+    if (isTagNameConflict(error)) conflict('A tag with this name already exists.');
     throw error;
   }
 }
@@ -1011,7 +1067,7 @@ export async function updateTag(db: RacioDatabase, userId: string, id: string, i
       .returning();
     return row;
   } catch (error) {
-    if (isUniqueViolation(error)) conflict('A tag with this name already exists.');
+    if (isTagNameConflict(error)) conflict('A tag with this name already exists.');
     throw error;
   }
 }
@@ -1820,4 +1876,478 @@ export async function deleteSavedView(db: RacioDatabase, userId: string, id: str
   return { deleted: true };
 }
 
+const DASHBOARD_DEFAULT_PERIOD_DAYS = 30;
+const DASHBOARD_TOP_N = 6;
+const DASHBOARD_GROUP_FETCH_LIMIT = 60;
+const DASHBOARD_ATTENTION_ITEM_LIMIT = 8;
+
+const ACTIONABLE_STATUSES = [
+  'needs_review',
+  'needs_mapping',
+  'needs_sheet_selection',
+  'ready',
+  'failed',
+] as const;
+
+function trimNumeric(value: string | null | undefined): string {
+  if (value == null) return '0';
+  const text = value.trim();
+  if (text === '' || text === '0') return '0';
+  const negative = text.startsWith('-');
+  const absolute = negative ? text.slice(1) : text;
+  const [whole, fraction] = absolute.split('.');
+  let result = whole || '0';
+  if (fraction && /[1-9]/u.test(fraction)) result += `.${fraction.replace(/0+$/u, '')}`;
+  return negative ? `-${result}` : result;
+}
+
+function toScaled(value: string): bigint {
+  const negative = value.startsWith('-');
+  const absolute = negative ? value.slice(1) : value;
+  const [whole = '0', fraction = ''] = absolute.split('.');
+  const scaled = BigInt(whole) * 1_000_000n + BigInt((fraction + '000000').slice(0, 6));
+  return negative ? -scaled : scaled;
+}
+
+function sharePercentOf(amount: string, total: string): string {
+  const totalScaled = toScaled(total);
+  if (totalScaled <= 0n) return '0';
+  const amountScaled = toScaled(amount);
+  const tenths = (amountScaled * 1000n) / totalScaled;
+  const whole = tenths / 10n;
+  const fraction = tenths % 10n;
+  return fraction > 0n ? `${whole}.${fraction}` : `${whole}`;
+}
+
+function periodBounds(input: DashboardQuery): { from: string; to: string; isDefault: boolean } {
+  if (input.dateFrom || input.dateTo) {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      from: input.dateFrom ?? today,
+      to: input.dateTo ?? today,
+      isDefault: false,
+    };
+  }
+  const now = new Date();
+  const to = now.toISOString().slice(0, 10);
+  const fromDate = new Date(now);
+  fromDate.setUTCDate(fromDate.getUTCDate() - (DASHBOARD_DEFAULT_PERIOD_DAYS - 1));
+  const from = fromDate.toISOString().slice(0, 10);
+  return { from, to, isDefault: true };
+}
+
+export async function getDashboardSummary(
+  db: RacioDatabase,
+  userId: string,
+  input: DashboardQuery,
+): Promise<DashboardSummary> {
+  if (input.accountId) {
+    const [owned] = await db
+      .select({ id: schema.financialAccounts.id })
+      .from(schema.financialAccounts)
+      .where(
+        and(
+          eq(schema.financialAccounts.id, input.accountId),
+          eq(schema.financialAccounts.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!owned) notFound('Account not found.');
+  }
+
+  const { from, to, isDefault } = periodBounds(input);
+
+  const transactionBase = () =>
+    [
+      eq(schema.transactions.userId, userId),
+      eq(schema.transactions.status, 'confirmed'),
+      gte(schema.transactions.bookingDate, from),
+      lte(schema.transactions.bookingDate, to),
+      input.accountId ? eq(schema.transactions.financialAccountId, input.accountId) : undefined,
+    ].filter((condition): condition is SQL => Boolean(condition));
+
+  const confirmedTransferNotExists = () =>
+    notExists(
+      db
+        .select({ id: schema.internalTransferLinks.id })
+        .from(schema.internalTransferLinks)
+        .where(
+          and(
+            eq(schema.internalTransferLinks.userId, userId),
+            eq(schema.internalTransferLinks.status, 'confirmed'),
+            or(
+              eq(schema.internalTransferLinks.outgoingTransactionId, schema.transactions.id),
+              eq(schema.internalTransferLinks.incomingTransactionId, schema.transactions.id),
+            )!,
+          ),
+        ),
+    );
+
+  const categoryIdExpr = sql<string | null>`(
+    CASE
+      WHEN ${schema.transactionSplits.id} IS NOT NULL
+      THEN ${schema.transactionSplitCategoryAssignments.categoryId}
+      ELSE ${schema.transactionCategoryAssignments.categoryId}
+    END
+  )`;
+  const categoryAmountExpr = sql<string>`sum(
+    CASE
+      WHEN ${schema.transactionSplits.id} IS NOT NULL
+      THEN ${schema.transactionSplits.amount}
+      ELSE ${schema.transactions.amount}
+    END
+  )`;
+
+  const [
+    accounts,
+    cashFlowRows,
+    categoryAllocationRows,
+    merchantRows,
+    unreviewedRows,
+    actionCountRows,
+    actionStatements,
+    expenseOutflowRows,
+  ] = await Promise.all([
+    db
+      .select({
+        id: schema.financialAccounts.id,
+        name: schema.financialAccounts.displayName,
+        currency: schema.financialAccounts.currencyCode,
+        status: schema.financialAccounts.status,
+      })
+      .from(schema.financialAccounts)
+      .where(
+        and(
+          eq(schema.financialAccounts.userId, userId),
+          eq(schema.financialAccounts.status, 'active'),
+        ),
+      )
+      .orderBy(asc(schema.financialAccounts.displayName)),
+    db
+      .select({
+        currency: schema.transactions.currencyCode,
+        inflow: sql<string>`coalesce(sum(${schema.transactions.amount}) filter (where ${schema.transactions.direction} = 'credit'), 0)`,
+        outflow: sql<string>`coalesce(sum(${schema.transactions.amount}) filter (where ${schema.transactions.direction} = 'debit'), 0)`,
+        count: count(),
+        unresolvedCount: sql<string>`count(*) filter (where ${schema.transactions.direction} = 'unknown')`,
+      })
+      .from(schema.transactions)
+      .where(and(...transactionBase(), confirmedTransferNotExists()))
+      .groupBy(schema.transactions.currencyCode),
+    db
+      .select({
+        currency: schema.transactions.currencyCode,
+        categoryId: categoryIdExpr,
+        amount: categoryAmountExpr,
+        count: countDistinct(schema.transactions.id),
+      })
+      .from(schema.transactions)
+      .leftJoin(
+        schema.transactionSplits,
+        and(
+          eq(schema.transactionSplits.transactionId, schema.transactions.id),
+          eq(schema.transactionSplits.userId, userId),
+          isNull(schema.transactionSplits.archivedAt),
+        ),
+      )
+      .leftJoin(
+        schema.transactionSplitCategoryAssignments,
+        and(
+          eq(schema.transactionSplitCategoryAssignments.splitId, schema.transactionSplits.id),
+          eq(schema.transactionSplitCategoryAssignments.userId, userId),
+          eq(schema.transactionSplitCategoryAssignments.role, 'primary'),
+        ),
+      )
+      .leftJoin(
+        schema.transactionCategoryAssignments,
+        and(
+          eq(schema.transactionCategoryAssignments.transactionId, schema.transactions.id),
+          eq(schema.transactionCategoryAssignments.userId, userId),
+          eq(schema.transactionCategoryAssignments.role, 'primary'),
+        ),
+      )
+      .where(
+        and(
+          ...transactionBase(),
+          eq(schema.transactions.direction, 'debit'),
+          confirmedTransferNotExists(),
+        ),
+      )
+      .groupBy(schema.transactions.currencyCode, categoryIdExpr)
+      .orderBy(desc(categoryAmountExpr))
+      .limit(DASHBOARD_GROUP_FETCH_LIMIT),
+    db
+      .select({
+        currency: schema.transactions.currencyCode,
+        name: schema.merchants.displayName,
+        amount: sql<string>`sum(${schema.transactions.amount})`,
+        count: count(),
+      })
+      .from(schema.transactions)
+      .innerJoin(schema.merchants, eq(schema.transactions.merchantId, schema.merchants.id))
+      .where(
+        and(
+          ...transactionBase(),
+          eq(schema.transactions.direction, 'debit'),
+          confirmedTransferNotExists(),
+        ),
+      )
+      .groupBy(schema.transactions.currencyCode, schema.merchants.displayName)
+      .orderBy(sql`sum(${schema.transactions.amount}) desc`)
+      .limit(DASHBOARD_GROUP_FETCH_LIMIT),
+    db
+      .select({ total: count() })
+      .from(schema.transactions)
+      .where(
+        and(
+          eq(schema.transactions.userId, userId),
+          eq(schema.transactions.status, 'confirmed'),
+          eq(schema.transactions.reviewed, false),
+        ),
+      ),
+    db
+      .select({
+        mismatch: sql<string>`count(*) filter (where ${schema.statements.reconciliationStatus} = 'mismatch')`,
+        needsAction: sql<string>`count(*) filter (where ${schema.statements.reconciliationStatus} <> 'mismatch')`,
+      })
+      .from(schema.statements)
+      .where(
+        and(
+          eq(schema.statements.userId, userId),
+          or(
+            inArray(schema.statements.processingStatus, ACTIONABLE_STATUSES),
+            eq(schema.statements.reconciliationStatus, 'mismatch'),
+          )!,
+        ),
+      ),
+    db
+      .select({
+        id: schema.statements.id,
+        filename: schema.statements.originalFilename,
+        processingStatus: schema.statements.processingStatus,
+        reconciliationStatus: schema.statements.reconciliationStatus,
+      })
+      .from(schema.statements)
+      .where(
+        and(
+          eq(schema.statements.userId, userId),
+          or(
+            inArray(schema.statements.processingStatus, ACTIONABLE_STATUSES),
+            eq(schema.statements.reconciliationStatus, 'mismatch'),
+          )!,
+        ),
+      )
+      .orderBy(desc(schema.statements.updatedAt))
+      .limit(DASHBOARD_ATTENTION_ITEM_LIMIT),
+    db
+      .select({
+        currency: schema.transactions.currencyCode,
+        outflow: sql<string>`sum(${schema.transactions.amount})`,
+      })
+      .from(schema.transactions)
+      .where(
+        and(
+          ...transactionBase(),
+          eq(schema.transactions.direction, 'debit'),
+          confirmedTransferNotExists(),
+        ),
+      )
+      .groupBy(schema.transactions.currencyCode),
+  ]);
+
+  const cashFlow = cashFlowRows.map((row) => {
+    const inflow = trimNumeric(row.inflow);
+    const outflow = trimNumeric(row.outflow);
+    const net = scaledIntegerToDecimal(toScaled(inflow) - toScaled(outflow));
+    return {
+      currency: row.currency,
+      inflow,
+      outflow,
+      net,
+      count: Number(row.count),
+      unresolvedCount: Number(row.unresolvedCount),
+    };
+  });
+  const expenseOutflowByCurrency = new Map(
+    expenseOutflowRows.map((row) => [row.currency, trimNumeric(row.outflow)]),
+  );
+
+  const categoryIds = [
+    ...new Set(
+      categoryAllocationRows
+        .map((row) => row.categoryId)
+        .filter((categoryId): categoryId is string => Boolean(categoryId)),
+    ),
+  ];
+  const categoryNameRows = categoryIds.length
+    ? await db
+        .select({ id: schema.categories.id, name: schema.categories.name })
+        .from(schema.categories)
+        .where(
+          and(eq(schema.categories.userId, userId), inArray(schema.categories.id, categoryIds)),
+        )
+    : [];
+  const categoryNameById = new Map(categoryNameRows.map((row) => [row.id, row.name]));
+
+  const categories: Array<{
+    currency: string;
+    name: string | null;
+    amount: string;
+    sharePercent: string;
+    count: number;
+  }> = [];
+  const allocationByCurrency = new Map<
+    string,
+    Array<{ categoryId: string | null; amount: string; count: number }>
+  >();
+  for (const row of categoryAllocationRows) {
+    const list = allocationByCurrency.get(row.currency) ?? [];
+    list.push({
+      categoryId: row.categoryId,
+      amount: trimNumeric(row.amount),
+      count: Number(row.count),
+    });
+    allocationByCurrency.set(row.currency, list);
+  }
+  for (const [currency, rows] of allocationByCurrency) {
+    const uncategorized = rows.find((row) => row.categoryId === null);
+    const categorized = rows.filter((row) => row.categoryId !== null).slice(0, DASHBOARD_TOP_N);
+    const entries = categorized.map((row) => ({
+      currency,
+      name: categoryNameById.get(row.categoryId!) ?? null,
+      amount: row.amount,
+      sharePercent: sharePercentOf(row.amount, expenseOutflowByCurrency.get(currency) ?? '0'),
+      count: row.count,
+    }));
+    if (uncategorized && uncategorized.amount !== '0') {
+      entries.push({
+        currency,
+        name: null,
+        amount: uncategorized.amount,
+        sharePercent: sharePercentOf(
+          uncategorized.amount,
+          expenseOutflowByCurrency.get(currency) ?? '0',
+        ),
+        count: uncategorized.count,
+      });
+    }
+    entries.sort((left, right) => {
+      const diff = toScaled(right.amount) - toScaled(left.amount);
+      return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+    });
+    categories.push(...entries);
+  }
+
+  const merchantByCurrency = new Map<string, typeof merchantRows>();
+  for (const row of merchantRows) {
+    const list = merchantByCurrency.get(row.currency) ?? [];
+    if (list.length < DASHBOARD_TOP_N) {
+      list.push(row);
+      merchantByCurrency.set(row.currency, list);
+    }
+  }
+  const merchants = Array.from(merchantByCurrency.entries()).flatMap(([currency, rows]) =>
+    rows.map((row) => ({
+      currency,
+      name: row.name,
+      amount: trimNumeric(row.amount),
+      sharePercent: sharePercentOf(row.amount, expenseOutflowByCurrency.get(currency) ?? '0'),
+      count: Number(row.count),
+    })),
+  );
+
+  const accountIds = accounts.map((account) => account.id);
+
+  const [allTimeHasData, periodAccountRows] =
+    accountIds.length === 0
+      ? [[], []]
+      : await Promise.all([
+          db
+            .select({ accountId: schema.transactions.financialAccountId })
+            .from(schema.transactions)
+            .where(
+              and(
+                eq(schema.transactions.userId, userId),
+                eq(schema.transactions.status, 'confirmed'),
+                inArray(schema.transactions.financialAccountId, accountIds),
+              ),
+            )
+            .groupBy(schema.transactions.financialAccountId),
+          db
+            .select({
+              accountId: schema.transactions.financialAccountId,
+              inflow: sql<string>`coalesce(sum(${schema.transactions.amount}) filter (where ${schema.transactions.direction} = 'credit'), 0)`,
+              outflow: sql<string>`coalesce(sum(${schema.transactions.amount}) filter (where ${schema.transactions.direction} = 'debit'), 0)`,
+              count: count(),
+            })
+            .from(schema.transactions)
+            .where(
+              and(
+                eq(schema.transactions.userId, userId),
+                eq(schema.transactions.status, 'confirmed'),
+                inArray(schema.transactions.financialAccountId, accountIds),
+                gte(schema.transactions.bookingDate, from),
+                lte(schema.transactions.bookingDate, to),
+              ),
+            )
+            .groupBy(schema.transactions.financialAccountId),
+        ]);
+
+  const hasDataAccountIds = new Set(allTimeHasData.map((row) => row.accountId));
+  const accountPeriod = new Map(periodAccountRows.map((row) => [row.accountId, row]));
+
+  const summaryAccounts = [];
+  for (const account of accounts) {
+    const period = accountPeriod.get(account.id);
+    const inflow = trimNumeric(period?.inflow);
+    const outflow = trimNumeric(period?.outflow);
+    const balance = await resolveAccountKnownBalance(db, userId, account.id);
+    summaryAccounts.push({
+      id: account.id,
+      name: account.name,
+      currency: account.currency,
+      status: account.status,
+      transactionCount: Number(period?.count ?? 0),
+      netActivity: scaledIntegerToDecimal(toScaled(inflow) - toScaled(outflow)),
+      balance,
+      hasData: hasDataAccountIds.has(account.id),
+    });
+  }
+
+  const unreviewed = Number(unreviewedRows[0]?.total ?? 0);
+  const reconciliationMismatch = Number(actionCountRows[0]?.mismatch ?? 0);
+  const statementsNeedingAction = Number(actionCountRows[0]?.needsAction ?? 0);
+  const items = actionStatements.map((statement) => ({
+    kind:
+      statement.reconciliationStatus === 'mismatch'
+        ? ('reconciliation_mismatch' as const)
+        : ('statement_needs_action' as const),
+    statementId: statement.id,
+    filename: statement.filename,
+    processingStatus: statement.processingStatus,
+    reconciliationStatus: statement.reconciliationStatus,
+  }));
+
+  const currencies = [...new Set(cashFlow.map((row) => row.currency))].sort();
+
+  return {
+    period: { from, to, isDefault },
+    hasAccounts: accounts.length > 0,
+    hasTransactions: cashFlowRows.some((row) => Number(row.count) > 0),
+    currencies,
+    cashFlow,
+    accounts: summaryAccounts,
+    categories,
+    merchants,
+    attention: {
+      unreviewed,
+      statementsNeedingAction,
+      reconciliationMismatch,
+      items,
+    },
+  };
+}
+
 export * from './phase6';
+export * from './spending';
+export { resolveAccountKnownBalance, type KnownBalance, type KnownBalanceSource } from './balance';

@@ -50,4 +50,27 @@ describe('classification domain', () => {
       ]),
     ).toMatchObject({ primaryCategoryId: 'first', tagIds: ['tag'] });
   });
+
+  it('allows existing source-type rules to match confirmed XLSX transactions', () => {
+    const document = {
+      conditions: {
+        version: 1 as const,
+        items: [
+          {
+            field: 'statement_source_type' as const,
+            operator: 'equals' as const,
+            value: 'xlsx',
+          },
+        ],
+      },
+      actions: {
+        version: 1 as const,
+        items: [{ type: 'mark_reviewed' as const }],
+      },
+      matchMode: 'all' as const,
+    };
+    expect(matchClassificationRule({ ...transaction, sourceType: 'xlsx' }, document).matches).toBe(
+      true,
+    );
+  });
 });

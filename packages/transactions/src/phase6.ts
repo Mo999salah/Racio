@@ -19,12 +19,40 @@ import {
   validateSplitSet,
   type TransferCandidate,
 } from '@racio/domain';
-import { schema, type RacioDatabase } from '@racio/database';
+import { schema, type RacioDatabase, isPostgresUniqueViolationOn } from '@racio/database';
 import { AuthBoundaryError } from '@racio/auth';
 
 const MAX_ALIAS_PREVIEW = 1_000;
 const MAX_ALIAS_APPLY = 5_000;
 const MAX_TRANSFER_SCAN = 1_000;
+
+const MERCHANT_NAME_UNIQUE = 'merchants_user_normalized_name_unique';
+const MERCHANT_ALIAS_UNIQUE = 'merchant_aliases_user_pattern_unique';
+const TRANSFER_PAIR_UNIQUE = 'internal_transfer_links_pair_unique';
+const TRANSFER_CONFIRMED_OUTGOING_UNIQUE = 'internal_transfer_links_confirmed_outgoing_unique';
+const TRANSFER_CONFIRMED_INCOMING_UNIQUE = 'internal_transfer_links_confirmed_incoming_unique';
+
+function isMerchantNameConflict(error: unknown): boolean {
+  // Merchant inserts/updates generate a server UUID id, so the only realistic
+  // unique violation is the per-user normalized-name rule.
+  return isPostgresUniqueViolationOn(error, MERCHANT_NAME_UNIQUE);
+}
+
+function isMerchantAliasConflict(error: unknown): boolean {
+  // Alias inserts/updates generate a server UUID id, so the only realistic
+  // unique violation is the per-user/merchant/type/pattern rule.
+  return isPostgresUniqueViolationOn(error, MERCHANT_ALIAS_UNIQUE);
+}
+
+function isTransferLinkConflict(error: unknown): boolean {
+  // Manual linking inserts a fresh UUID id; the realistic unique violations are
+  // the pair rule and the confirmed outgoing/incoming partial indexes.
+  return (
+    isPostgresUniqueViolationOn(error, TRANSFER_PAIR_UNIQUE) ||
+    isPostgresUniqueViolationOn(error, TRANSFER_CONFIRMED_OUTGOING_UNIQUE) ||
+    isPostgresUniqueViolationOn(error, TRANSFER_CONFIRMED_INCOMING_UNIQUE)
+  );
+}
 
 function notFound(message: string): never {
   throw new AuthBoundaryError('NOT_FOUND', message);
@@ -343,8 +371,7 @@ export async function createMerchant(db: RacioDatabase, userId: string, input: M
       .returning();
     return row;
   } catch (error) {
-    if ((error as { code?: string }).code === '23505')
-      conflict('A merchant with this name already exists.');
+    if (isMerchantNameConflict(error)) conflict('A merchant with this name already exists.');
     throw error;
   }
 }
@@ -359,17 +386,22 @@ export async function updateMerchant(
   const displayName = input.displayName ?? current.displayName;
   const normalizedName = normalizeMerchantName(displayName);
   if (!normalizedName) validation('Merchant name is required.');
-  const [row] = await db
-    .update(schema.merchants)
-    .set({
-      displayName: displayName.trim(),
-      normalizedName,
-      notes: input.notes === undefined ? current.notes : input.notes,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(schema.merchants.id, merchantId), eq(schema.merchants.userId, userId)))
-    .returning();
-  return row;
+  try {
+    const [row] = await db
+      .update(schema.merchants)
+      .set({
+        displayName: displayName.trim(),
+        normalizedName,
+        notes: input.notes === undefined ? current.notes : input.notes,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(schema.merchants.id, merchantId), eq(schema.merchants.userId, userId)))
+      .returning();
+    return row;
+  } catch (error) {
+    if (isMerchantNameConflict(error)) conflict('A merchant with this name already exists.');
+    throw error;
+  }
 }
 
 export async function actionMerchant(
@@ -417,20 +449,26 @@ export async function createMerchantAlias(
   if (merchant.status !== 'active') conflict('Only active merchants can receive aliases.');
   const normalizedPattern = normalizeMerchantName(input.rawPattern);
   if (!normalizedPattern) validation('Alias pattern is required.');
-  const [row] = await db
-    .insert(schema.merchantAliases)
-    .values({
-      id: randomUUID(),
-      userId,
-      merchantId,
-      rawPattern: input.rawPattern.trim(),
-      normalizedPattern,
-      matchType: input.matchType,
-      enabled: input.enabled,
-      priority: input.priority,
-    })
-    .returning();
-  return row;
+  try {
+    const [row] = await db
+      .insert(schema.merchantAliases)
+      .values({
+        id: randomUUID(),
+        userId,
+        merchantId,
+        rawPattern: input.rawPattern.trim(),
+        normalizedPattern,
+        matchType: input.matchType,
+        enabled: input.enabled,
+        priority: input.priority,
+      })
+      .returning();
+    return row;
+  } catch (error) {
+    if (isMerchantAliasConflict(error))
+      conflict('A merchant alias with this pattern already exists.');
+    throw error;
+  }
 }
 
 export async function updateMerchantAlias(
@@ -446,19 +484,25 @@ export async function updateMerchantAlias(
     .limit(1);
   if (!current) notFound('Merchant alias not found.');
   const rawPattern = input.rawPattern ?? current.rawPattern;
-  const [row] = await db
-    .update(schema.merchantAliases)
-    .set({
-      rawPattern: rawPattern.trim(),
-      normalizedPattern: normalizeMerchantName(rawPattern),
-      matchType: input.matchType ?? current.matchType,
-      enabled: input.enabled ?? current.enabled,
-      priority: input.priority ?? current.priority,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(schema.merchantAliases.id, aliasId), eq(schema.merchantAliases.userId, userId)))
-    .returning();
-  return row;
+  try {
+    const [row] = await db
+      .update(schema.merchantAliases)
+      .set({
+        rawPattern: rawPattern.trim(),
+        normalizedPattern: normalizeMerchantName(rawPattern),
+        matchType: input.matchType ?? current.matchType,
+        enabled: input.enabled ?? current.enabled,
+        priority: input.priority ?? current.priority,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(schema.merchantAliases.id, aliasId), eq(schema.merchantAliases.userId, userId)))
+      .returning();
+    return row;
+  } catch (error) {
+    if (isMerchantAliasConflict(error))
+      conflict('A merchant alias with this pattern already exists.');
+    throw error;
+  }
 }
 
 export async function actionMerchantAlias(
@@ -1007,21 +1051,26 @@ export async function createManualTransferLink(
     input.outgoingTransactionId,
     input.incomingTransactionId,
   );
-  const [row] = await db
-    .insert(schema.internalTransferLinks)
-    .values({
-      id: randomUUID(),
-      userId,
-      outgoingTransactionId: input.outgoingTransactionId,
-      incomingTransactionId: input.incomingTransactionId,
-      status: 'confirmed',
-      matchScore: pair.evaluation.score,
-      matchReasons: [...pair.evaluation.reasons, 'manual_confirmation'],
-      source: 'manual',
-      confirmedAt: new Date(),
-    })
-    .returning();
-  return row;
+  try {
+    const [row] = await db
+      .insert(schema.internalTransferLinks)
+      .values({
+        id: randomUUID(),
+        userId,
+        outgoingTransactionId: input.outgoingTransactionId,
+        incomingTransactionId: input.incomingTransactionId,
+        status: 'confirmed',
+        matchScore: pair.evaluation.score,
+        matchReasons: [...pair.evaluation.reasons, 'manual_confirmation'],
+        source: 'manual',
+        confirmedAt: new Date(),
+      })
+      .returning();
+    return row;
+  } catch (error) {
+    if (isTransferLinkConflict(error)) conflict('These transactions are already linked.');
+    throw error;
+  }
 }
 
 export async function listInternalTransfers(
@@ -1108,22 +1157,27 @@ export async function actionInternalTransfer(
   if (!link) notFound('Transfer link not found.');
   if (action === 'confirm') {
     await getTransferPair(db, userId, link.outgoingTransactionId, link.incomingTransactionId);
-    const [row] = await db
-      .update(schema.internalTransferLinks)
-      .set({
-        status: 'confirmed',
-        confirmedAt: new Date(),
-        rejectedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(schema.internalTransferLinks.id, linkId),
-          eq(schema.internalTransferLinks.userId, userId),
-        ),
-      )
-      .returning();
-    return row;
+    try {
+      const [row] = await db
+        .update(schema.internalTransferLinks)
+        .set({
+          status: 'confirmed',
+          confirmedAt: new Date(),
+          rejectedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.internalTransferLinks.id, linkId),
+            eq(schema.internalTransferLinks.userId, userId),
+          ),
+        )
+        .returning();
+      return row;
+    } catch (error) {
+      if (isTransferLinkConflict(error)) conflict('These transactions are already linked.');
+      throw error;
+    }
   }
   const [row] = await db
     .update(schema.internalTransferLinks)

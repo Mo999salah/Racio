@@ -1,8 +1,9 @@
 # Racio parser service
 
-The parser is an isolated FastAPI service. It currently exposes `/health` and
-`/parse/placeholder`; it does not parse statements yet and has no database or
-AI access.
+The parser is an isolated FastAPI service. It exposes `/health`,
+`/parse/placeholder`, `/parse/csv`, `/inspect/xlsx`, and `/parse/xlsx`. It has
+no database, OAuth, AI, or storage credentials and returns neutral versioned
+typed results only.
 
 Run locally with:
 
@@ -11,7 +12,9 @@ uv sync --dev
 uv run uvicorn racio_parser.main:app --reload --port 8001
 ```
 
-Future adapters must enforce file-size, page-count, decompression, row-count,
-memory, and execution-time limits before processing untrusted documents. The
-service returns neutral typed results with decimal-string amounts and must not
-write document content or financial data to logs.
+CSV bounds file, line, field, and row sizes. XLSX inspection validates the
+ZIP/XML container, relationships, expanded size and ratio, sheet/cell
+dimensions, formulas, merged ranges, strings, active content, and
+encrypted/binary formats before loading the workbook model. Money is transported
+as decimal strings, formulas are never evaluated, and workbook/cell content is
+never written to logs. See `docs/xlsx-import.md` for the full contract.

@@ -858,6 +858,11 @@
           "name": "financial_accounts_user_institution_unique",
           "nullsNotDistinct": false,
           "columns": ["user_id", "institution_id"]
+        },
+        "financial_accounts_id_user_id_unique": {
+          "name": "financial_accounts_id_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": ["id", "user_id"]
         }
       },
       "policies": {},
@@ -1456,6 +1461,11 @@
           "name": "raw_transactions_statement_row_unique",
           "nullsNotDistinct": false,
           "columns": ["statement_id", "source_row"]
+        },
+        "raw_transactions_id_user_id_unique": {
+          "name": "raw_transactions_id_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": ["id", "user_id"]
         }
       },
       "policies": {},
