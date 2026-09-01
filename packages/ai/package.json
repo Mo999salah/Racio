@@ -16,6 +16,6 @@
     "@racio/config": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^3.0.8"
+    "vitest": "^4.1.11"
   }
 }
