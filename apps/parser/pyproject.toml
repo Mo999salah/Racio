@@ -36,7 +36,7 @@ dev = [
 fixtures = [
   "arabic-reshaper>=3.0,<4",
   "python-bidi>=0.6,<1",
-  "reportlab>=4.2,<5",
+  "reportlab>=4.2,<6",
 ]
 
 [tool.ruff]
