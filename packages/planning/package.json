@@ -21,6 +21,6 @@
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
-    "vitest": "^3.0.8"
+    "vitest": "^4.1.11"
   }
 }
