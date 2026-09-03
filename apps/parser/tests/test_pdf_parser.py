@@ -5,7 +5,16 @@ from fastapi.testclient import TestClient
 
 from racio_parser.config import ParserSettings
 from racio_parser.main import app
-from racio_parser.pdf_parser import inspect_pdf, parse_pdf
+from racio_parser.pdf_parser import (
+    Band,
+    Layout,
+    PdfWord,
+    PendingRow,
+    VisualLine,
+    _candidate_from_row,
+    inspect_pdf,
+    parse_pdf,
+)
 from racio_parser.pdf_security import PdfSecurityError
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "statements" / "pdf"
@@ -15,6 +24,54 @@ client = TestClient(app)
 
 def fixture(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+def test_candidate_description_is_truncated_to_contract_limit() -> None:
+    description_words = [PdfWord(text="x" * 1_001, x0=10, x1=20)]
+    line = VisualLine(
+        page=1,
+        top=10,
+        bottom=20,
+        x0=10,
+        x1=20,
+        words=description_words,
+        text="x" * 1_001,
+    )
+    row = PendingRow(
+        page=1,
+        lines=[line],
+        date_raw="01/08/2026",
+        date_iso="2026-08-01",
+        date_ambiguous=False,
+        description_words=description_words,
+        debit_raw=None,
+        credit_raw=None,
+        amount_raw="12.50",
+        balance_raw="100",
+        currency_raw="TRY",
+        direction_marker=None,
+        inferred_year=False,
+    )
+    layout = Layout(
+        date_format="%d/%m/%Y",
+        has_year=True,
+        decimal_separator=".",
+        thousands_separator=",",
+        amount_mode="signed",
+        bands={"description": Band(10, 20)},
+        header_labels=[],
+        source_pages=[1],
+    )
+
+    candidate = _candidate_from_row(row, 1, layout, "TRY")
+
+    assert candidate.description is not None
+    assert len(candidate.description) == 1_000
+    assert "description_truncated" in candidate.warnings
+    assert len(candidate.rawDescription) == 1_001
+    assert candidate.bookingDate == "2026-08-01"
+    assert candidate.amount == "12.5"
+    assert candidate.direction == "credit"
 
 
 def test_english_statement_detects_layout_and_signed_amounts() -> None:

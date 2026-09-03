@@ -187,6 +187,7 @@ MAX_RAW_LINES = 8
 MAX_RAW_LINE_LENGTH = 2_000
 MIN_TEXT_CHARS = 40
 MAX_DESCRIPTION_CHARS = 20_000
+MAX_CANDIDATE_DESCRIPTION_CHARS = 1_000
 
 
 @dataclass(frozen=True)
@@ -1057,7 +1058,9 @@ def _candidate_from_row(
     description = " ".join(word.text for word in row.description_words).strip()
     if not description:
         warnings.append("missing_description")
-    description = description[:MAX_DESCRIPTION_CHARS]
+    if len(description) > MAX_CANDIDATE_DESCRIPTION_CHARS:
+        description = description[:MAX_CANDIDATE_DESCRIPTION_CHARS]
+        warnings.append("description_truncated")
 
     currency = row.currency_raw or detected_currency
     if currency and not ISO_CURRENCY.fullmatch(currency):
