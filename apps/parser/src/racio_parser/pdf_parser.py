@@ -773,7 +773,7 @@ def _detect_layout(
         bands["counterparty"] = header_bands["counterparty"]
     if header_bands.get("transactionIdentifier"):
         bands["transactionIdentifier"] = header_bands["transactionIdentifier"]
-    description_band = _description_band(date_band, bands, None)
+    description_band = _description_band(date_band, bands, header_bands.get("description"))
     if description_band:
         bands["description"] = description_band
 

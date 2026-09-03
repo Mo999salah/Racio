@@ -12,6 +12,7 @@ from racio_parser.pdf_parser import (
     PendingRow,
     VisualLine,
     _candidate_from_row,
+    _detect_layout,
     inspect_pdf,
     parse_pdf,
 )
@@ -72,6 +73,28 @@ def test_candidate_description_is_truncated_to_contract_limit() -> None:
     assert candidate.bookingDate == "2026-08-01"
     assert candidate.amount == "12.5"
     assert candidate.direction == "credit"
+
+
+def test_detect_layout_uses_detected_description_header_band() -> None:
+    header = VisualLine(
+        page=1,
+        top=10,
+        bottom=20,
+        x0=10,
+        x1=280,
+        words=[
+            PdfWord(text="Date", x0=10, x1=20),
+            PdfWord(text="Amount", x0=100, x1=120),
+            PdfWord(text="Balance", x0=140, x1=160),
+            PdfWord(text="Description", x0=200, x1=280),
+        ],
+    )
+
+    layout = _detect_layout([header], None)
+
+    assert {"bookingDate", "amount", "balance", "description"} <= set(layout.bands)
+    assert layout.bands["description"].x0 == 180
+    assert layout.bands["description"].x1 == 320
 
 
 def test_english_statement_detects_layout_and_signed_amounts() -> None:

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from racio_parser.config import ParserSettings
-from racio_parser.csv_parser import parse_csv
+from racio_parser.csv_parser import _header_score, parse_csv
 from racio_parser.main import app
 
 client = TestClient(app)
@@ -50,6 +50,10 @@ def test_csv_parser_supports_semicolon_decimal_comma_and_quotes() -> None:
     assert result.candidates[0].rawDescription == "Market; merkez"
     assert result.candidates[0].amount == "45.9"
     assert result.candidates[0].direction == "debit"
+
+
+def test_header_score_recognizes_turkish_description_i_variant() -> None:
+    assert _header_score("AÇIKLAMA", "description") > 0
 
 
 def test_csv_parser_preserves_scale_zero_through_six_without_float_conversion() -> None:

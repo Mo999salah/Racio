@@ -59,6 +59,7 @@ def _header_score(header: str, field: str) -> int:
             "memo",
             "narrative",
             "açıklama",
+            "açiklama",
             "aciklama",
             "detay",
             "البيان",
