@@ -108,9 +108,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Raise Playwright PostgreSQL connection limit
         run: |
-          containers="$(docker ps --filter 'label=com.github.actions.service=postgres' --format '{{.ID}}')"
-          [ "$(printf '%s\n' "$containers" | sed '/^$/d' | wc -l)" -eq 1 ]
-          container="$(printf '%s\n' "$containers" | sed -n '1p')"
+          containers="$(
+            docker ps \
+              --filter 'ancestor=postgres:16-alpine' \
+              --filter 'publish=5433' \
+              --format '{{.ID}}'
+          )"
+          count="$(printf '%s\n' "$containers" | sed '/^$/d' | wc -l)"
+          if [ "$count" -ne 1 ]; then
+            echo "Expected one Playwright PostgreSQL container; found $count."
+            docker ps --format 'table {{.ID}}\t{{.Image}}\t{{.Ports}}'
+            exit 1
+          fi
+          container="$containers"
           docker exec "$container" psql -U racio -d racio -v ON_ERROR_STOP=1 \
             -c "ALTER SYSTEM SET max_connections = '200';"
           docker restart "$container"
