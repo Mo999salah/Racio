@@ -106,6 +106,19 @@ jobs:
           cache: pnpm
       - uses: astral-sh/setup-uv@v6
       - run: pnpm install --frozen-lockfile
+      - name: Raise Playwright PostgreSQL connection limit
+        run: |
+          containers="$(docker ps --filter 'label=com.github.actions.service=postgres' --format '{{.ID}}')"
+          [ "$(printf '%s\n' "$containers" | sed '/^$/d' | wc -l)" -eq 1 ]
+          container="$(printf '%s\n' "$containers" | sed -n '1p')"
+          docker exec "$container" psql -U racio -d racio -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET max_connections = '200';"
+          docker restart "$container"
+          for _ in $(seq 1 30); do
+            docker exec "$container" pg_isready -U racio -d racio && break
+            sleep 1
+          done
+          [ "$(docker exec "$container" psql -U racio -d racio -Atc 'SHOW max_connections;')" = '200' ]
       - run: pnpm --filter @racio/database db:migrate
         env:
           DATABASE_URL: postgresql://racio:racio_dev@localhost:5433/racio
