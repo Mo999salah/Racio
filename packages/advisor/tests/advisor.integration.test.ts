@@ -119,7 +119,7 @@ async function seedUser(db: RacioDatabase, prefix: string, currency = 'TRY'): Pr
       financialAccountId: accountId,
       statementId,
       sourceRawTransactionId: rawId,
-      bookingDate: input.bookingDate ?? dateInCurrentMonth(5),
+      bookingDate: input.bookingDate ?? dateInCurrentMonth(1),
       amount: input.amount,
       currencyCode: input.currency,
       direction: input.direction,
