@@ -65,6 +65,7 @@
     "exceeded": "Aşıldı"
   },
   "nav": {
+    "skip": "İçeriğe geç",
     "primary": "Birincil gezinme",
     "workspace": "Çalışma alanı",
     "accounts": "Hesaplar",

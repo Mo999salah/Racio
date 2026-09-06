@@ -3,6 +3,7 @@ import { getMessages, getLocale, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { directionForLocale, locales } from '@racio/i18n';
 import { routing } from '../../i18n/routing';
+import { DirectionProvider } from '@/components/ui/direction';
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
@@ -21,8 +22,10 @@ export default async function LocaleLayout({
   const direction = directionForLocale(locale);
 
   return (
-    <div lang={locale} dir={direction} className="min-h-screen">
-      <NextIntlClientProvider messages={messages}>{children}</NextIntlClientProvider>
+    <div lang={locale} dir={direction} className="min-h-screen bg-background text-foreground">
+      <DirectionProvider dir={direction}>
+        <NextIntlClientProvider messages={messages}>{children}</NextIntlClientProvider>
+      </DirectionProvider>
     </div>
   );
 }

@@ -6,12 +6,9 @@ const config: Config = {
     './components/**/*.{ts,tsx}',
     '../../packages/ui/src/**/*.{ts,tsx}',
   ],
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
-    extend: {
-      fontFamily: {
-        sans: ['var(--font-racio)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-      },
-    },
+    extend: {},
   },
   plugins: [],
 };

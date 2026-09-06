@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { authClient } from '../lib/auth-client';
+import { Button } from '@/components/ui/button';
 
 export function SignOutButton({ label, locale }: { label: string; locale: string }) {
   const [busy, setBusy] = useState(false);
@@ -13,8 +14,8 @@ export function SignOutButton({ label, locale }: { label: string; locale: string
   }
 
   return (
-    <button type="button" className="text-button" onClick={signOut} disabled={busy}>
+    <Button type="button" variant="outline" size="lg" onClick={signOut} disabled={busy}>
       {busy ? '…' : label}
-    </button>
+    </Button>
   );
 }

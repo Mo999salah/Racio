@@ -65,6 +65,7 @@
     "exceeded": "Exceeded"
   },
   "nav": {
+    "skip": "Skip to content",
     "primary": "Primary navigation",
     "workspace": "Workspace",
     "accounts": "Accounts",

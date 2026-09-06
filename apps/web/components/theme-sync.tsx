@@ -13,6 +13,7 @@ export function ThemeSync({ appearance }: { appearance: UserPreferences['appeara
             : 'light'
           : appearance;
       document.documentElement.dataset.theme = mode;
+      document.documentElement.classList.toggle('dark', mode === 'dark');
     };
     apply();
     const media = window.matchMedia('(prefers-color-scheme: dark)');

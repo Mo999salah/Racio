@@ -4,6 +4,7 @@ import { getSession } from '@racio/auth';
 import { unreadAlertCount } from '@racio/planning';
 import { database } from '../lib/database';
 import { SignOutButton } from './sign-out-button';
+import { Badge } from '@/components/ui/badge';
 
 export async function AccountShell({
   locale,
@@ -18,9 +19,12 @@ export async function AccountShell({
   const session = await getSession(await headers());
   const unread = session ? await unreadAlertCount(database.db, session.user.id) : 0;
   return (
-    <main className="racio-shell">
+    <div className="racio-shell">
+      <a className="skip-link" href="#main-content">
+        {t('nav.skip')}
+      </a>
       <header className="racio-topbar">
-        <div>
+        <div className="brand-block">
           <p className="brand-mark">{t('app.name')}</p>
           <p className="brand-tagline">{name}</p>
         </div>
@@ -54,7 +58,7 @@ export async function AccountShell({
           </a>
           <a className="nav-link" href={`/${locale}/alerts`}>
             {t('nav.alerts')}
-            {unread > 0 ? <span className="nav-unread">{unread}</span> : null}
+            {unread > 0 ? <Badge className="ms-1 tabular-nums">{unread}</Badge> : null}
           </a>
           <a className="nav-link" href={`/${locale}/advisor`}>
             {t('nav.advisor')}
@@ -68,10 +72,12 @@ export async function AccountShell({
           <a className="nav-link" href={`/${locale}/sessions`}>
             {t('nav.sessions')}
           </a>
-          <SignOutButton label={t('auth.signOut')} locale={locale} />
         </nav>
+        <div className="topbar-actions">
+          <SignOutButton label={t('auth.signOut')} locale={locale} />
+        </div>
       </header>
-      {children}
-    </main>
+      <main id="main-content">{children}</main>
+    </div>
   );
 }
